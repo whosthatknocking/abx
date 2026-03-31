@@ -232,6 +232,50 @@ func TestGroupMentionRunCommandIsHandledLocally(t *testing.T) {
 	}
 }
 
+func TestGroupMentionRunIntentWithNonAtPrefixIsHandledLocally(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "COMMAND: pwd\nWHY: Shows the current working directory."}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "pwd" {
+					return nil
+				}
+				return errors.New("command blocked by policy: no allow rule matched in allowlist mode")
+			},
+		},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "group:test",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		MentionedBot:   true,
+		Text:           "\uFFFC /run what is your current directory",
+	})
+	if err != nil {
+		t.Fatalf("handle group /run intent: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Command:\npwd") {
+		t.Fatalf("unexpected group /run intent response: %q", msgs.sent[0])
+	}
+	if len(agentSpy.lastMessages) == 0 {
+		t.Fatal("expected agent recommendation path for group /run intent")
+	}
+}
+
 func TestGroupMentionControlCommandIsHandledLocally(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

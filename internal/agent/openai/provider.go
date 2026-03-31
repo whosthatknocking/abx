@@ -34,12 +34,6 @@ func New(cfg config.ProviderConfig, logger *log.Logger) *Provider {
 }
 
 func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types.Tool) (types.AgentResponse, error) {
-	if p.cfg.APIKey == "" {
-		return types.AgentResponse{
-			Text: "OpenAI API key is not configured. Update agent.primary.api_key in config.toml.",
-		}, nil
-	}
-
 	body := map[string]any{
 		"model":    p.cfg.Model,
 		"messages": toChatMessages(messages),
@@ -54,7 +48,9 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types
 	if err != nil {
 		return types.AgentResponse{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	if p.cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
@@ -84,16 +80,14 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types
 }
 
 func (p *Provider) Check(ctx context.Context) error {
-	if p.cfg.APIKey == "" {
-		return fmt.Errorf("openai api key is not configured")
-	}
-
 	url := strings.TrimRight(p.baseURL(), "/") + "/models/" + p.cfg.Model
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	if p.cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {

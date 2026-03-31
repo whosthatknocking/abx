@@ -19,6 +19,9 @@ provider = "openai"
 api_key = "key"
 model = "gpt-4o-mini"
 
+[debug]
+enabled = true
+
 [security]
 trusted_numbers = [
   "+1",
@@ -56,5 +59,8 @@ description = "test"
 	}
 	if cfg.Command.Policy.Rules[0].ID != "allow-pwd" {
 		t.Fatalf("unexpected rule id %q", cfg.Command.Policy.Rules[0].ID)
+	}
+	if !cfg.Debug.Enabled {
+		t.Fatalf("expected debug.enabled to be true")
 	}
 }

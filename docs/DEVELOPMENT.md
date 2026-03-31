@@ -40,6 +40,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - OpenAI chat-completions integration is implemented with the standard library HTTP client
 - SQLite persistence uses the local `sqlite3` CLI
 - Command execution is deny-by-default and policy-validated at startup
+- Runtime logs now include higher-level interaction tracing for accepted messages, agent request start/end, command proposal creation, approvals, and command execution outcomes
 
 ## Quality Checks
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -48,10 +49,14 @@ type Service struct {
 }
 
 func NewService(opts Options) *Service {
+	logger := opts.Logger
+	if logger == nil {
+		logger = log.New(io.Discard, "", 0)
+	}
 	return &Service{
 		version:   opts.Version,
 		config:    opts.Config,
-		logger:    opts.Logger,
+		logger:    logger,
 		repo:      opts.Repo,
 		auditor:   opts.Auditor,
 		messenger: opts.Messenger,
@@ -70,6 +75,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope) error {
 	if !s.allowed(env) {
+		s.logger.Printf("untrusted interaction rejected conversation=%s sender=%s chat_type=%s mentioned=%t", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot)
 		s.audit(audit.Record{
 			Event:          "message_rejected",
 			ConversationID: env.ConversationID,
@@ -79,6 +85,7 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		})
 		return nil
 	}
+	s.logger.Printf("interaction accepted conversation=%s sender=%s chat_type=%s mentioned=%t text_len=%d", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot, len(strings.TrimSpace(env.Text)))
 
 	sessionID, err := s.repo.GetActiveSessionID(ctx, env.ConversationID)
 	if err != nil {
@@ -112,11 +119,14 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 	if s.isApproval(env.Text) {
 		return s.handleApproval(ctx, env, sessionID)
 	}
-	if strings.HasPrefix(strings.TrimSpace(env.Text), "/") {
-		return s.handleControl(ctx, env)
-	}
 	if command, ok := s.shellRequest(env.Text); ok {
 		return s.handleShellRequest(ctx, env, sessionID, command)
+	}
+	if isRunHelp(env.Text) {
+		return s.handleRunHelp(ctx, env, sessionID)
+	}
+	if strings.HasPrefix(strings.TrimSpace(env.Text), "/") {
+		return s.handleControl(ctx, env)
 	}
 	return s.handleConversation(ctx, env, sessionID)
 }
@@ -136,8 +146,23 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	summary, err := s.repo.GetActiveConversationSummary(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
+	s.logger.Printf(
+		"agent interaction start conversation=%s session=%s sender=%s history_messages=%d history_chars=%d summary_chars=%d input_chars=%d",
+		env.ConversationID,
+		sessionID,
+		env.Sender,
+		len(history),
+		totalChars(history),
+		len(summary),
+		len(strings.TrimSpace(env.Text)),
+	)
 	response, err := s.agent.Chat(ctx, history, nil)
 	if err != nil {
+		s.logger.Printf("agent interaction failed conversation=%s session=%s sender=%s err=%v", env.ConversationID, sessionID, env.Sender, err)
 		s.audit(audit.Record{
 			Event:          "agent_error",
 			ConversationID: env.ConversationID,
@@ -148,10 +173,18 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		})
 		return s.messenger.Send(ctx, env.ConversationID, fmt.Sprintf("Agent request failed: %v", err))
 	}
-	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, response.Text)
+	s.logger.Printf(
+		"agent interaction complete conversation=%s session=%s sender=%s response_chars=%d",
+		env.ConversationID,
+		sessionID,
+		env.Sender,
+		len(strings.TrimSpace(response.Text)),
+	)
+	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.formatAgentReply(response.Text))
 }
 
 func (s *Service) handleShellRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, command string) error {
+	s.logger.Printf("command proposal created conversation=%s session=%s sender=%s command=%q", env.ConversationID, sessionID, env.Sender, command)
 	requestID := mustID()
 	nonce := mustToken(3)
 	approval := types.PendingApproval{
@@ -179,6 +212,18 @@ func (s *Service) handleShellRequest(ctx context.Context, env types.IncomingEnve
 	})
 	text := fmt.Sprintf("Proposed command:\n%s\n\nReply with: YES %s", command, nonce)
 	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, text)
+}
+
+func (s *Service) handleRunHelp(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
+	s.audit(audit.Record{
+		Event:          "control_command",
+		ConversationID: env.ConversationID,
+		SessionID:      sessionID,
+		Sender:         env.Sender,
+		MessageType:    "control",
+		Decision:       "/run",
+	})
+	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /run <command>\nExample: /run pwd")
 }
 
 func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
@@ -225,6 +270,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Approval token mismatch.")
 	}
+	s.logger.Printf("command approval accepted conversation=%s session=%s request_id=%s proposed_by=%s approved_by=%s command=%q", env.ConversationID, approval.SessionID, approval.RequestID, approval.ProposedBy, env.Sender, approval.Command)
 	output, execErr := s.executor.Execute(ctx, approval.Command)
 	if clearErr := s.repo.ClearPendingApproval(ctx, env.ConversationID, approval.RequestID); clearErr != nil {
 		return clearErr
@@ -243,8 +289,10 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		Error:          errorString(execErr),
 	})
 	if execErr != nil {
+		s.logger.Printf("command execution failed conversation=%s session=%s request_id=%s err=%v output_chars=%d", env.ConversationID, approval.SessionID, approval.RequestID, execErr, len(output))
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", strings.TrimSpace(execErr.Error()+"\n"+output)))
 	}
+	s.logger.Printf("command execution complete conversation=%s session=%s request_id=%s output_chars=%d", env.ConversationID, approval.SessionID, approval.RequestID, len(output))
 	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command completed.\n%s", strings.TrimSpace(output)))
 }
 
@@ -269,12 +317,12 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "abx version "+s.version)
 	case "/config":
-		fallback := "no"
+		fallback := "not configured"
 		if s.config.Agent.Fallback.Provider != "" {
-			fallback = fmt.Sprintf("yes (%s / %s)", s.config.Agent.Fallback.Provider, s.config.Agent.Fallback.Model)
+			fallback = fmt.Sprintf("%s (%s)", s.config.Agent.Fallback.Model, endpointClass(s.config.Agent.Fallback.BaseURL))
 		}
-		text := fmt.Sprintf("Primary agent: %s / %s\nFallback configured: %s\nVersion: %s",
-			s.config.Agent.Primary.Provider, s.config.Agent.Primary.Model, fallback, s.version)
+		text := fmt.Sprintf("Primary: %s (%s)\nFallback: %s\nVersion: %s",
+			s.config.Agent.Primary.Model, endpointClass(s.config.Agent.Primary.BaseURL), fallback, s.version)
 		s.audit(audit.Record{
 			Event:          "control_command",
 			ConversationID: env.ConversationID,
@@ -344,6 +392,10 @@ func (s *Service) shellRequest(text string) (string, bool) {
 	return "", false
 }
 
+func isRunHelp(text string) bool {
+	return strings.TrimSpace(text) == "/run"
+}
+
 func (s *Service) isApproval(text string) bool {
 	text = strings.TrimSpace(text)
 	return strings.HasPrefix(text, "YES ")
@@ -405,4 +457,39 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func totalChars(messages []types.Message) int {
+	total := 0
+	for _, msg := range messages {
+		total += len(msg.Text)
+	}
+	return total
+}
+
+func (s *Service) formatAgentReply(text string) string {
+	if s.config == nil || !s.config.Debug.Enabled {
+		return text
+	}
+	label := fmt.Sprintf("[agent: %s / %s (%s)]", s.config.Agent.Primary.Provider, s.config.Agent.Primary.Model, endpointClass(s.config.Agent.Primary.BaseURL))
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return label
+	}
+	return trimmed + "\n\n" + label
+}
+
+func endpointClass(baseURL string) string {
+	baseURL = strings.TrimSpace(strings.ToLower(baseURL))
+	if baseURL == "" {
+		return "remote"
+	}
+	switch {
+	case strings.Contains(baseURL, "127.0.0.1"),
+		strings.Contains(baseURL, "localhost"),
+		strings.Contains(baseURL, "0.0.0.0"):
+		return "local"
+	default:
+		return "remote"
+	}
 }

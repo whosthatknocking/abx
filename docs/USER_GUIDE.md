@@ -15,6 +15,7 @@
 
 - Normal questions are sent to the configured agent.
 - `/version`, `/config`, and `/reset` are built-in control commands.
+- `/run` shows command usage help.
 - `/run <command>` proposes a shell command and requires an approval token before execution.
 
 ## Conversational Requests
@@ -22,8 +23,17 @@
 - Trusted users can ask normal questions such as explanations, summaries, or brainstorming prompts.
 - In v1, responses come only from the configured model plus locally stored conversation context.
 - Live external lookups such as current weather or news are not available in v1.
+- If `[debug].enabled = true`, normal chat replies also include which configured agent responded.
 
 ## Approval Flow
+
+1. Send `/run` if you want to see the usage format
+2. Send `/run pwd`
+3. `abx` replies with a command proposal and token such as `YES abc123`
+4. Any trusted participant in that chat may approve with the exact token
+5. If the command is allowed by policy, it executes in the configured workspace
+
+## Example
 
 1. Send `/run pwd`
 2. `abx` replies with a command proposal and token such as `YES abc123`

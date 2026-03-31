@@ -73,6 +73,7 @@ rpc_port = 7583
 
 - Configuration is file-based only in v1.
 - `agent.primary.model` is required for OpenAI.
+- `[debug].enabled = true` appends agent identity details to normal chat responses for troubleshooting.
 - Shell commands are blocked unless they match an enabled allow rule.
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.
 

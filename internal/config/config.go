@@ -11,10 +11,15 @@ import (
 type Config struct {
 	Messaging MessagingConfig
 	Agent     AgentConfig
+	Debug     DebugConfig
 	Security  SecurityConfig
 	Audit     AuditConfig
 	Database  DatabaseConfig
 	Command   CommandConfig
+}
+
+type DebugConfig struct {
+	Enabled bool
 }
 
 type MessagingConfig struct {

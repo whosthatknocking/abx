@@ -24,6 +24,11 @@ func decodeConfig(tree map[string]any) (*Config, error) {
 	cfg.Agent.Primary = decodeProvider(childMap(agent, "primary"))
 	cfg.Agent.Fallback = decodeProvider(childMap(agent, "fallback"))
 
+	debug := childMap(tree, "debug")
+	cfg.Debug = DebugConfig{
+		Enabled: boolValueDefault(debug, "enabled", false),
+	}
+
 	security := childMap(tree, "security")
 	cfg.Security.TrustedNumbers = stringSliceValue(security, "trusted_numbers")
 

@@ -22,6 +22,10 @@ provider = "openai"
 base_url = "http://localhost:11434/v1"
 model = "llama3.2"
 
+# Debug
+[debug]
+enabled = false
+
 # Security
 [security]
 trusted_numbers = [

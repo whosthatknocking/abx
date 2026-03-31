@@ -100,8 +100,8 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		})
 		return nil
 	}
-	env.Text = normalizeIncomingText(env)
-	s.logger.Printf("interaction accepted conversation=%s sender=%s chat_type=%s mentioned=%t text_len=%d", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot, len(strings.TrimSpace(env.Text)))
+	text := effectiveIncomingText(env)
+	s.logger.Printf("interaction accepted conversation=%s sender=%s chat_type=%s mentioned=%t text_len=%d", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot, len(strings.TrimSpace(text)))
 
 	sessionID, err := s.repo.GetActiveSessionID(ctx, env.ConversationID)
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		Role:           types.RoleUser,
 		Kind:           types.MessageKindInbound,
 		ChatType:       env.ChatType,
-		Text:           env.Text,
+		Text:           text,
 		MentionedBot:   env.MentionedBot,
 		CreatedAt:      coalesceTime(env.CreatedAt, time.Now()),
 	}
@@ -135,23 +135,23 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 	if err := s.cancelPendingApprovalOnNonApproval(ctx, env, sessionID); err != nil {
 		return err
 	}
-	if s.isApproval(env.Text) {
+	if s.isApproval(text) {
 		return s.handleApproval(ctx, env, sessionID)
 	}
-	if command, ok := s.shellRequest(env.Text); ok {
+	if command, ok := s.shellRequest(text); ok {
 		return s.handleRunRequest(ctx, env, sessionID, command)
 	}
-	if isRunHelp(env.Text) {
+	if isRunHelp(text) {
 		return s.handleRunHelp(ctx, env, sessionID)
 	}
-	if strings.HasPrefix(strings.TrimSpace(env.Text), "/") {
+	if strings.HasPrefix(strings.TrimSpace(text), "/") {
 		return s.handleControl(ctx, env)
 	}
 	return s.handleConversation(ctx, env, sessionID)
 }
 
 func (s *Service) cancelPendingApprovalOnNonApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
-	if s.isApproval(env.Text) {
+	if s.isApproval(effectiveIncomingText(env)) {
 		return nil
 	}
 	approval, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
@@ -213,7 +213,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		len(agentMessages),
 		totalChars(agentMessages),
 		len(summary),
-		len(strings.TrimSpace(env.Text)),
+		len(strings.TrimSpace(effectiveIncomingText(env))),
 	)
 	response, err := s.agent.Chat(ctx, agentMessages, nil)
 	if err != nil {
@@ -370,12 +370,12 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 			Sender:         env.Sender,
 			RequestID:      approval.RequestID,
 			MessageType:    "approval",
-			ApprovalText:   strings.TrimSpace(env.Text),
+			ApprovalText:   strings.TrimSpace(effectiveIncomingText(env)),
 			Decision:       "expired",
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "The pending approval token has expired.")
 	}
-	nonce := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(env.Text), "YES"))
+	nonce := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(effectiveIncomingText(env)), "YES"))
 	if nonce != approval.Nonce {
 		s.audit(audit.Record{
 			Event:          "approval_rejected",
@@ -384,7 +384,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 			Sender:         env.Sender,
 			RequestID:      approval.RequestID,
 			MessageType:    "approval",
-			ApprovalText:   strings.TrimSpace(env.Text),
+			ApprovalText:   strings.TrimSpace(effectiveIncomingText(env)),
 			Decision:       "token_mismatch",
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Approval token mismatch.")
@@ -402,7 +402,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		ApprovedBy:     env.Sender,
 		RequestID:      approval.RequestID,
 		MessageType:    "command",
-		ApprovalText:   strings.TrimSpace(env.Text),
+		ApprovalText:   strings.TrimSpace(effectiveIncomingText(env)),
 		Command:        approval.Command,
 		Decision:       decisionFor(execErr),
 		Output:         output,
@@ -424,7 +424,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	if err != nil {
 		return err
 	}
-	fields := strings.Fields(strings.TrimSpace(env.Text))
+	fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
 	if len(fields) == 0 {
 		return nil
 	}
@@ -887,60 +887,11 @@ func looksLikeExactCommand(input string) bool {
 	}
 }
 
-func normalizeIncomingText(env types.IncomingEnvelope) string {
-	text := strings.TrimSpace(env.Text)
-	if env.ChatType != types.ChatTypeGroup || !env.MentionedBot {
+func effectiveIncomingText(env types.IncomingEnvelope) string {
+	if text := strings.TrimSpace(env.NormalizedText); text != "" {
 		return text
 	}
-	text = stripLeadingMentions(text)
-	if approvalText, ok := extractApprovalText(text); ok {
-		return approvalText
-	}
-	if commandText, ok := extractLeadingSlashCommand(text); ok {
-		return commandText
-	}
-	return text
-}
-
-func stripLeadingMentions(text string) string {
-	text = strings.TrimSpace(text)
-	for strings.HasPrefix(text, "@") {
-		fields := strings.Fields(text)
-		if len(fields) == 0 {
-			return ""
-		}
-		first := strings.TrimSpace(fields[0])
-		if !strings.HasPrefix(first, "@") {
-			break
-		}
-		text = strings.TrimSpace(strings.TrimPrefix(text, first))
-		text = strings.TrimLeft(text, " \t,:;-")
-	}
-	return strings.TrimSpace(text)
-}
-
-func extractLeadingSlashCommand(text string) (string, bool) {
-	text = strings.TrimSpace(text)
-	for _, command := range []string{"/run", "/help", "/version", "/config", "/reset"} {
-		if idx := strings.Index(text, command); idx >= 0 {
-			prefix := strings.TrimSpace(text[:idx])
-			if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
-				return strings.TrimSpace(text[idx:]), true
-			}
-		}
-	}
-	return "", false
-}
-
-func extractApprovalText(text string) (string, bool) {
-	text = strings.TrimSpace(text)
-	if idx := strings.Index(text, "YES "); idx >= 0 {
-		prefix := strings.TrimSpace(text[:idx])
-		if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
-			return strings.TrimSpace(text[idx:]), true
-		}
-	}
-	return "", false
+	return strings.TrimSpace(env.Text)
 }
 
 func endpointClass(baseURL string) string {

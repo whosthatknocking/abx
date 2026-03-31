@@ -220,6 +220,7 @@ func TestGroupMentionRunCommandIsHandledLocally(t *testing.T) {
 		ChatType:       types.ChatTypeGroup,
 		MentionedBot:   true,
 		Text:           "@abx /run pwd",
+		NormalizedText: "/run pwd",
 	})
 	if err != nil {
 		t.Fatalf("handle group /run pwd: %v", err)
@@ -261,6 +262,7 @@ func TestGroupMentionRunIntentWithNonAtPrefixIsHandledLocally(t *testing.T) {
 		ChatType:       types.ChatTypeGroup,
 		MentionedBot:   true,
 		Text:           "\uFFFC /run what is your current directory",
+		NormalizedText: "/run what is your current directory",
 	})
 	if err != nil {
 		t.Fatalf("handle group /run intent: %v", err)
@@ -307,6 +309,7 @@ func TestGroupMentionApprovalWithPrefixIsHandledLocally(t *testing.T) {
 		ChatType:       types.ChatTypeGroup,
 		MentionedBot:   true,
 		Text:           "@abx /run pwd",
+		NormalizedText: "/run pwd",
 	}); err != nil {
 		t.Fatalf("handle group /run pwd: %v", err)
 	}
@@ -325,6 +328,7 @@ func TestGroupMentionApprovalWithPrefixIsHandledLocally(t *testing.T) {
 		ChatType:       types.ChatTypeGroup,
 		MentionedBot:   true,
 		Text:           "\uFFFC YES " + approval.Nonce,
+		NormalizedText: "YES " + approval.Nonce,
 	}); err != nil {
 		t.Fatalf("handle group approval: %v", err)
 	}
@@ -357,6 +361,7 @@ func TestGroupMentionControlCommandIsHandledLocally(t *testing.T) {
 		ChatType:       types.ChatTypeGroup,
 		MentionedBot:   true,
 		Text:           "@abx /help",
+		NormalizedText: "/help",
 	})
 	if err != nil {
 		t.Fatalf("handle group /help: %v", err)

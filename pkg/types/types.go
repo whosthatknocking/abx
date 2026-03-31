@@ -64,6 +64,7 @@ type IncomingEnvelope struct {
 	Recipient      string
 	ChatType       ChatType
 	Text           string
+	NormalizedText string
 	MentionedBot   bool
 	CreatedAt      time.Time
 }

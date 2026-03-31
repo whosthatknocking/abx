@@ -166,6 +166,69 @@ func TestDecodeEnvelopeFromRPCGroupMention(t *testing.T) {
 	if !got.MentionedBot {
 		t.Fatal("expected mention to be detected")
 	}
+	if got.NormalizedText != "status?" {
+		t.Fatalf("unexpected normalized text: %q", got.NormalizedText)
+	}
+}
+
+func TestDecodeEnvelopeFromRPCGroupCommandNormalizesMentionPrefix(t *testing.T) {
+	payload := mustRPCMessage(t, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "receive",
+		"params": map[string]any{
+			"envelope": map[string]any{
+				"sourceNumber": "+15551230000",
+				"timestamp":    "1710000000000",
+				"dataMessage": map[string]any{
+					"message": "@abx /run pwd",
+					"groupInfo": map[string]any{
+						"groupId": "group-123",
+					},
+					"mentions": []any{
+						map[string]any{"number": "+15550001111"},
+					},
+				},
+			},
+		},
+	})
+
+	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	if !ok {
+		t.Fatal("expected group envelope to decode")
+	}
+	if got.NormalizedText != "/run pwd" {
+		t.Fatalf("unexpected normalized group command text: %q", got.NormalizedText)
+	}
+}
+
+func TestDecodeEnvelopeFromRPCGroupApprovalNormalizesMentionPrefix(t *testing.T) {
+	payload := mustRPCMessage(t, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "receive",
+		"params": map[string]any{
+			"envelope": map[string]any{
+				"sourceNumber": "+15551230000",
+				"timestamp":    "1710000000000",
+				"dataMessage": map[string]any{
+					"message": "\uFFFC YES 1299b2",
+					"groupInfo": map[string]any{
+						"groupId": "group-123",
+					},
+					"mentions": []any{
+						map[string]any{"number": "+15550001111"},
+					},
+				},
+			},
+		},
+	})
+
+	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	if !ok {
+		t.Fatal("expected group envelope to decode")
+	}
+	if got.NormalizedText != "YES 1299b2" {
+		t.Fatalf("unexpected normalized group approval text: %q", got.NormalizedText)
+	}
 }
 
 func mustRPCMessage(t *testing.T, payload map[string]any) rpcMessage {

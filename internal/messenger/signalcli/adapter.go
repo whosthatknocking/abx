@@ -184,16 +184,75 @@ func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEn
 	if messageText == "" || conversationID == "" {
 		return types.IncomingEnvelope{}, false
 	}
+	messageText = strings.TrimSpace(messageText)
+	isMentioned := mentionedBot(dataMessage, account)
 	return types.IncomingEnvelope{
 		ID:             stringField(envelope, "timestamp"),
 		ConversationID: conversationID,
 		Sender:         stringField(envelope, "sourceNumber"),
 		Recipient:      account,
 		ChatType:       chatType,
-		Text:           strings.TrimSpace(messageText),
-		MentionedBot:   mentionedBot(dataMessage, account),
+		Text:           messageText,
+		NormalizedText: normalizeGroupRoutingText(messageText, chatType, isMentioned),
+		MentionedBot:   isMentioned,
 		CreatedAt:      envelopeTimestamp(envelope),
 	}, true
+}
+
+func normalizeGroupRoutingText(text string, chatType types.ChatType, mentionedBot bool) string {
+	text = strings.TrimSpace(text)
+	if chatType != types.ChatTypeGroup || !mentionedBot {
+		return text
+	}
+	text = stripLeadingMentions(text)
+	if approvalText, ok := extractApprovalText(text); ok {
+		return approvalText
+	}
+	if commandText, ok := extractLeadingSlashCommand(text); ok {
+		return commandText
+	}
+	return text
+}
+
+func stripLeadingMentions(text string) string {
+	text = strings.TrimSpace(text)
+	for strings.HasPrefix(text, "@") {
+		fields := strings.Fields(text)
+		if len(fields) == 0 {
+			return ""
+		}
+		first := strings.TrimSpace(fields[0])
+		if !strings.HasPrefix(first, "@") {
+			break
+		}
+		text = strings.TrimSpace(strings.TrimPrefix(text, first))
+		text = strings.TrimLeft(text, " \t,:;-")
+	}
+	return strings.TrimSpace(text)
+}
+
+func extractLeadingSlashCommand(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	for _, command := range []string{"/run", "/help", "/version", "/config", "/reset"} {
+		if idx := strings.Index(text, command); idx >= 0 {
+			prefix := strings.TrimSpace(text[:idx])
+			if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
+				return strings.TrimSpace(text[idx:]), true
+			}
+		}
+	}
+	return "", false
+}
+
+func extractApprovalText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if idx := strings.Index(text, "YES "); idx >= 0 {
+		prefix := strings.TrimSpace(text[:idx])
+		if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
+			return strings.TrimSpace(text[idx:]), true
+		}
+	}
+	return "", false
 }
 
 func mentionedBot(dataMessage map[string]any, account string) bool {

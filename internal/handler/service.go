@@ -417,6 +417,16 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		return nil
 	}
 	switch fields[0] {
+	case "/help":
+		s.audit(audit.Record{
+			Event:          "control_command",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "control",
+			Decision:       "/help",
+		})
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, helpText())
 	case "/version":
 		s.audit(audit.Record{
 			Event:          "control_command",
@@ -574,6 +584,22 @@ func (s *Service) versionText() string {
 		return text
 	}
 	return text + "\nBuild: " + s.buildInfo
+}
+
+func helpText() string {
+	return strings.Join([]string{
+		"Available message types:",
+		"- Normal questions: ask for explanations, summaries, brainstorming, or other chat help",
+		"- /run <command-or-intent>: run an exact command or ask the agent to recommend one command for approval",
+		"- YES <token>: approve the currently pending command in this chat",
+		"",
+		"Built-in commands:",
+		"- /help",
+		"- /version",
+		"- /config",
+		"- /reset",
+		"- /run",
+	}, "\n")
 }
 
 func (s *Service) configText() string {

@@ -23,7 +23,7 @@
 - Group-chat activation via transport metadata in v1 (`signal-cli` Signal mention metadata)
 - Conversational agent responses from local context only
 - Automatic conversation summaries for older context in longer chats
-- Built-in control commands: `/version`, `/config`, `/reset`
+- Built-in control commands: `/help`, `/version`, `/config`, `/reset`
 - Unified `/run <command-or-intent>` flow for direct commands or agent-recommended commands
 - Deny-by-default shell execution with explicit allow rules
 - Request-bound approval tokens for command execution

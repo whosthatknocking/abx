@@ -264,6 +264,44 @@ func TestVersionCommandOmitsBuildMetadataWhenUnavailable(t *testing.T) {
 	}
 }
 
+func TestHelpCommandSummarizesAvailableTypes(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/help",
+	})
+	if err != nil {
+		t.Fatalf("handle /help: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Available message types:") {
+		t.Fatalf("unexpected /help response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "- /run <command-or-intent>:") {
+		t.Fatalf("unexpected /help response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "- /help") {
+		t.Fatalf("unexpected /help response: %q", msgs.sent[0])
+	}
+}
+
 func TestResetStartsNewSession(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

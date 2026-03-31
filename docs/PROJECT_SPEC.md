@@ -300,8 +300,9 @@ All project documentation must live under the `docs/` directory. The repository 
   - After restart, `abx` must be able to resume conversation handling from local persisted state.
 
 - **Built-in Control Commands**:
-  - The system must support dedicated slash-style commands such as `/version`, `/config`, and `/reset`.
+  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, and `/reset`.
   - These commands are handled by the application directly and do not require agent inference to route them.
+  - `/help` returns a concise summary of the supported message types and built-in commands.
   - `/version` returns the running application version and, if available, build metadata.
   - `/config` returns a safe normalized runtime summary of the active messaging, agent, MCP, storage, and command-policy configuration.
   - `/reset` performs a soft reset of the active conversation session for the current chat context.

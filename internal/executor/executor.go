@@ -38,15 +38,8 @@ func New(cfg config.CommandConfig) (*Executor, error) {
 
 func (e *Executor) Execute(ctx context.Context, command string) (string, error) {
 	command = strings.TrimSpace(command)
-	eval := e.policy.Evaluate(command)
-	if !eval.Allowed {
-		if len(eval.DenyMatches) > 0 {
-			return "", fmt.Errorf("command blocked by policy: matched deny rule(s): %s", strings.Join(eval.DenyMatches, ", "))
-		}
-		if e.policy.mode == "allowlist" {
-			return "", fmt.Errorf("command blocked by policy: no allow rule matched in allowlist mode")
-		}
-		return "", fmt.Errorf("command blocked by policy")
+	if err := e.Check(command); err != nil {
+		return "", err
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
@@ -61,4 +54,19 @@ func (e *Executor) Execute(ctx context.Context, command string) (string, error) 
 		return string(out), fmt.Errorf("command failed: %w", err)
 	}
 	return string(out), nil
+}
+
+func (e *Executor) Check(command string) error {
+	command = strings.TrimSpace(command)
+	eval := e.policy.Evaluate(command)
+	if eval.Allowed {
+		return nil
+	}
+	if len(eval.DenyMatches) > 0 {
+		return fmt.Errorf("command blocked by policy: matched deny rule(s): %s", strings.Join(eval.DenyMatches, ", "))
+	}
+	if e.policy.mode == "allowlist" {
+		return fmt.Errorf("command blocked by policy: no allow rule matched in allowlist mode")
+	}
+	return fmt.Errorf("command blocked by policy")
 }

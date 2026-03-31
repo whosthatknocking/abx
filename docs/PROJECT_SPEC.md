@@ -262,6 +262,11 @@ All project documentation must live under the `docs/` directory. The repository 
   - In v1, normal conversational agent requests must be answered from the configured model and locally persisted conversation context only.
   - In v1, the system must not invoke external tools or live network lookups for informational questions such as weather, news, or search.
   - If a user asks for current or external information that is not available from local context, the system should respond transparently that live external lookup is not enabled in v1.
+  - In v1, shell-command execution should enter through the dedicated `/run` flow rather than implicit command inference from arbitrary conversational messages.
+  - `/run` should support both:
+    1. direct exact commands such as `/run pwd`
+    2. plain-English intent requests such as `/run show the current user`
+  - For a plain-English `/run` intent, the agent may recommend exactly one shell command plus a short rationale.
   - Only requests that would result in local shell command execution must enter the approval flow.
   - If the system cannot confidently determine whether a request requires shell execution, it should prefer the safer path and require approval before executing any command.
 
@@ -327,7 +332,11 @@ All project documentation must live under the `docs/` directory. The repository 
     2. In group chats, only trusted senders may invoke them, and only when the bot is explicitly mentioned according to Signal mention metadata.
 
 - **Approval Flow**:
-  - Agent proposes command → Bot sends confirmation request.
+  - `/run` receives either an exact command or a plain-English command intent.
+  - If the `/run` payload is already an executable command under the current policy, the bot should propose that exact command directly.
+  - If the `/run` payload is a plain-English intent, the agent may recommend one candidate command and a short rationale.
+  - The recommended command must still pass the current command policy before the bot offers it for approval.
+  - The bot then sends the confirmation request for the exact command that would be executed.
   - Approval must be bound to a specific pending command ID and short-lived nonce.
   - Any trusted sender who is permitted to interact with the system may approve a pending command by replying with the exact approval token for that request (for example `YES 482731`), not a bare `YES`.
   - Any other trusted response cancels the proposal for that chat.

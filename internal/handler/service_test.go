@@ -45,10 +45,18 @@ func (a *fakeAgent) Check(_ context.Context) error {
 
 type fakeExecutor struct {
 	output string
+	check  func(command string) error
 }
 
 func (e *fakeExecutor) Execute(_ context.Context, _ string) (string, error) {
 	return e.output, nil
+}
+
+func (e *fakeExecutor) Check(command string) error {
+	if e.check != nil {
+		return e.check(command)
+	}
+	return nil
 }
 
 func TestConfigCommandIsHandledLocally(t *testing.T) {
@@ -321,7 +329,7 @@ func TestRunWithoutCommandShowsUsage(t *testing.T) {
 	if len(msgs.sent) != 1 {
 		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
 	}
-	if !strings.Contains(msgs.sent[0], "Usage: /run <command>") {
+	if !strings.Contains(msgs.sent[0], "Usage: /run <command-or-intent>") {
 		t.Fatalf("unexpected /run help response: %q", msgs.sent[0])
 	}
 }
@@ -449,7 +457,14 @@ func TestNonApprovalReplyCancelsPendingApproval(t *testing.T) {
 		Auditor:   nil,
 		Messenger: msgs,
 		Agent:     agentSpy,
-		Executor:  &fakeExecutor{},
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "pwd" {
+					return nil
+				}
+				return errors.New("blocked")
+			},
+		},
 	})
 
 	ctx := context.Background()
@@ -495,6 +510,101 @@ func TestNonApprovalReplyCancelsPendingApproval(t *testing.T) {
 	}
 	if len(agentSpy.lastMessages) == 0 {
 		t.Fatal("expected agent to handle follow-up message")
+	}
+}
+
+func TestRunIntentUsesAgentRecommendedCommand(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "COMMAND: whoami\nWHY: Shows the current user account."}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "whoami" {
+					return nil
+				}
+				return errors.New("command blocked by policy: no allow rule matched in allowlist mode")
+			},
+		},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/run show the current user",
+	})
+	if err != nil {
+		t.Fatalf("handle /run intent: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Command:\nwhoami") {
+		t.Fatalf("expected recommended command in response, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Why:\nShows the current user account.") {
+		t.Fatalf("expected recommendation reason in response, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Reply with:\nYES ") {
+		t.Fatalf("expected approval token in response, got %q", msgs.sent[0])
+	}
+	if len(agentSpy.lastMessages) == 0 {
+		t.Fatal("expected agent to be invoked for /run intent")
+	}
+	if agentSpy.lastMessages[0].Role != types.RoleSystem || !strings.Contains(agentSpy.lastMessages[0].Text, "Return exactly this format:") {
+		t.Fatalf("expected run recommendation system prompt, got %#v", agentSpy.lastMessages[0])
+	}
+}
+
+func TestRunIntentBlockedRecommendationReturnsExplanation(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "COMMAND: rm -rf /\nWHY: Deletes everything."}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "rm -rf /" {
+					return errors.New("command blocked by policy: matched deny rule(s): deny-rm-root")
+				}
+				return errors.New("command blocked by policy: no allow rule matched in allowlist mode")
+			},
+		},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/run delete everything",
+	})
+	if err != nil {
+		t.Fatalf("handle blocked /run intent: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "I can't propose it for approval because it is blocked by the current command policy:") {
+		t.Fatalf("expected blocked recommendation explanation, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "deny-rm-root") {
+		t.Fatalf("expected deny rule details, got %q", msgs.sent[0])
 	}
 }
 

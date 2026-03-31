@@ -24,6 +24,7 @@
 - Conversational agent responses from local context only
 - Automatic conversation summaries for older context in longer chats
 - Built-in control commands: `/version`, `/config`, `/reset`
+- Unified `/run <command-or-intent>` flow for direct commands or agent-recommended commands
 - Deny-by-default shell execution with explicit allow rules
 - Request-bound approval tokens for command execution
 - Local conversation/session persistence with soft-reset support

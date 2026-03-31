@@ -26,7 +26,9 @@
 - Normal questions are sent to the configured agent.
 - `/version`, `/config`, and `/reset` are built-in control commands.
 - `/run` shows command usage help.
-- `/run <command>` proposes a shell command and requires an approval token before execution.
+- `/run <command-or-intent>` can either:
+  - propose an exact shell command directly when the input already looks executable under the current policy
+  - ask the agent to recommend one runnable command plus a short reason, then propose that command for approval
 
 ## Conversational Requests
 
@@ -52,6 +54,13 @@
 2. `abx` replies with the command plus a single approval line such as `YES abc123`
 3. Any trusted participant in that chat may approve with the exact token
 4. If the command is allowed by policy, it executes in the configured workspace
+
+## Agent-Assisted `/run`
+
+- You can also use `/run` with a plain-English intent such as `/run show the current user`.
+- In that mode, `abx` asks the agent to recommend one minimal shell command and a short explanation.
+- If the recommended command passes the current command policy, `abx` turns it into the normal approval flow.
+- If the recommended command is blocked by policy, `abx` explains that instead of creating a runnable approval request.
 
 ## Control Commands
 

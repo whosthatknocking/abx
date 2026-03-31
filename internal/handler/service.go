@@ -28,6 +28,7 @@ type messenger interface {
 
 type commandExecutor interface {
 	Execute(ctx context.Context, command string) (string, error)
+	Check(command string) error
 }
 
 type Options struct {
@@ -136,7 +137,7 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		return s.handleApproval(ctx, env, sessionID)
 	}
 	if command, ok := s.shellRequest(env.Text); ok {
-		return s.handleShellRequest(ctx, env, sessionID, command)
+		return s.handleRunRequest(ctx, env, sessionID, command)
 	}
 	if isRunHelp(env.Text) {
 		return s.handleRunHelp(ctx, env, sessionID)
@@ -235,7 +236,61 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, strings.TrimSpace(response.Text), s.formatAgentReply(response.Text))
 }
 
-func (s *Service) handleShellRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, command string) error {
+func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
+	if err := s.executor.Check(input); err == nil {
+		return s.proposeCommand(ctx, env, sessionID, input, "")
+	}
+	return s.handleRecommendedRun(ctx, env, sessionID, input)
+}
+
+func (s *Service) handleRecommendedRun(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
+	messages, err := s.runRecommendationMessages(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
+	s.logger.Printf("run recommendation requested conversation=%s session=%s sender=%s input=%q", env.ConversationID, sessionID, env.Sender, input)
+	response, err := s.agent.Chat(ctx, messages, nil)
+	if err != nil {
+		s.audit(audit.Record{
+			Event:          "run_recommendation_error",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "command",
+			Error:          err.Error(),
+		})
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Agent request failed: %v", err))
+	}
+
+	command, reason, ok := parseRunRecommendation(response.Text)
+	if !ok {
+		s.audit(audit.Record{
+			Event:          "run_recommendation_invalid",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "command",
+			Error:          "agent did not return a valid command recommendation",
+		})
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "I couldn't produce a runnable command recommendation for that request. Try a more specific `/run ...` request or provide the exact command.")
+	}
+	if err := s.executor.Check(command); err != nil {
+		s.audit(audit.Record{
+			Event:          "run_recommendation_blocked",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "command",
+			Command:        command,
+			Error:          err.Error(),
+		})
+		text := fmt.Sprintf("Recommended command:\n%s\n\nWhy:\n%s\n\nI can't propose it for approval because it is blocked by the current command policy:\n%s", command, coalesce(reason, "No reason provided."), err)
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, text)
+	}
+	return s.proposeCommand(ctx, env, sessionID, command, reason)
+}
+
+func (s *Service) proposeCommand(ctx context.Context, env types.IncomingEnvelope, sessionID, command, reason string) error {
 	s.logger.Printf("command proposal created conversation=%s session=%s sender=%s command=%q", env.ConversationID, sessionID, env.Sender, command)
 	requestID := mustID()
 	nonce := mustToken(3)
@@ -262,7 +317,7 @@ func (s *Service) handleShellRequest(ctx context.Context, env types.IncomingEnve
 		Command:        command,
 		Decision:       "pending_approval",
 	})
-	text := fmt.Sprintf("Command:\n%s\n\nReply with:\nYES %s", command, nonce)
+	text := formatCommandProposal(command, reason, nonce)
 	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, text)
 }
 
@@ -275,7 +330,7 @@ func (s *Service) handleRunHelp(ctx context.Context, env types.IncomingEnvelope,
 		MessageType:    "control",
 		Decision:       "/run",
 	})
-	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /run <command>\nExample: /run pwd")
+	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /run <command-or-intent>\nExamples:\n/run pwd\n/run show the current user")
 }
 
 func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
@@ -660,6 +715,68 @@ func normalizeHistoryForAgent(messages []types.Message) []types.Message {
 		out = append(out, copy)
 	}
 	return out
+}
+
+func (s *Service) runRecommendationMessages(ctx context.Context, conversationID string) ([]types.Message, error) {
+	history, err := s.repo.GetActiveHistory(ctx, conversationID, summaryHistoryLimit)
+	if err != nil {
+		return nil, err
+	}
+	history = normalizeHistoryForAgent(history)
+	summary, err := s.repo.GetActiveConversationSummary(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
+	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
+	if desiredSummary != summary {
+		sessionID, err := s.repo.GetActiveSessionID(ctx, conversationID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.repo.SaveConversationSummary(ctx, conversationID, sessionID, desiredSummary); err != nil {
+			return nil, err
+		}
+		summary = desiredSummary
+	}
+	messages := prependSummaryMessage(recentHistory, summary)
+	instruction := types.Message{
+		Role: types.RoleSystem,
+		Text: "You are helping with `/run` in a local macOS shell environment. If the latest user message contains a shell command already, preserve it. Otherwise, recommend exactly one minimal bash command that best satisfies the user's intent. Prefer read-only commands when possible. Return exactly this format:\nCOMMAND: <single shell command>\nWHY: <one short sentence>\nIf you cannot recommend a command safely, return:\nCOMMAND:\nWHY: <brief reason>",
+	}
+	return append([]types.Message{instruction}, messages...), nil
+}
+
+func parseRunRecommendation(text string) (command, reason string, ok bool) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(strings.ToUpper(trimmed), "COMMAND:"):
+			command = strings.TrimSpace(trimmed[len("COMMAND:"):])
+		case strings.HasPrefix(strings.ToUpper(trimmed), "WHY:"):
+			reason = strings.TrimSpace(trimmed[len("WHY:"):])
+		}
+	}
+	command = compactWhitespace(command)
+	reason = compactWhitespace(reason)
+	if command == "" {
+		return "", reason, false
+	}
+	return command, reason, true
+}
+
+func formatCommandProposal(command, reason, nonce string) string {
+	var b strings.Builder
+	b.WriteString("Command:\n")
+	b.WriteString(strings.TrimSpace(command))
+	if strings.TrimSpace(reason) != "" {
+		b.WriteString("\n\nWhy:\n")
+		b.WriteString(strings.TrimSpace(reason))
+	}
+	b.WriteString("\n\nReply with:\nYES ")
+	b.WriteString(strings.TrimSpace(nonce))
+	return b.String()
 }
 
 func endpointClass(baseURL string) string {

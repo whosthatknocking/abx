@@ -235,6 +235,21 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		env.Sender,
 		len(strings.TrimSpace(response.Text)),
 	)
+	if command, reason, ok := parseConversationCommandProposal(response.Text); ok {
+		if err := s.executor.Check(command); err != nil {
+			s.audit(audit.Record{
+				Event:          "conversation_command_blocked",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "command",
+				Command:        command,
+				Error:          err.Error(),
+			})
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, formatBlockedRecommendation(command, reason, err))
+		}
+		return s.proposeCommand(ctx, env, sessionID, command, reason)
+	}
 	return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, strings.TrimSpace(response.Text), s.formatAgentReply(response.Text))
 }
 
@@ -294,8 +309,7 @@ func (s *Service) handleRecommendedRun(ctx context.Context, env types.IncomingEn
 			Command:        command,
 			Error:          err.Error(),
 		})
-		text := fmt.Sprintf("Recommended command:\n%s\n\nWhy:\n%s\n\nI can't propose it for approval because it is blocked by the current command policy:\n%s", command, coalesce(reason, "No reason provided."), err)
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, text)
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, formatBlockedRecommendation(command, reason, err))
 	}
 	return s.proposeCommand(ctx, env, sessionID, command, reason)
 }
@@ -390,6 +404,24 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Approval token mismatch.")
 	}
 	s.logger.Printf("command approval accepted conversation=%s session=%s request_id=%s proposed_by=%s approved_by=%s command=%q", env.ConversationID, approval.SessionID, approval.RequestID, approval.ProposedBy, env.Sender, approval.Command)
+	if err := s.executor.Check(approval.Command); err != nil {
+		if clearErr := s.repo.ClearPendingApproval(ctx, env.ConversationID, approval.RequestID); clearErr != nil {
+			return clearErr
+		}
+		s.audit(audit.Record{
+			Event:          "approval_rejected",
+			ConversationID: env.ConversationID,
+			SessionID:      approval.SessionID,
+			Sender:         env.Sender,
+			RequestID:      approval.RequestID,
+			MessageType:    "approval",
+			ApprovalText:   strings.TrimSpace(effectiveIncomingText(env)),
+			Command:        approval.Command,
+			Error:          err.Error(),
+			Decision:       "policy_recheck_failed",
+		})
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", err))
+	}
 	output, execErr := s.executor.Execute(ctx, approval.Command)
 	if clearErr := s.repo.ClearPendingApproval(ctx, env.ConversationID, approval.RequestID); clearErr != nil {
 		return clearErr
@@ -808,6 +840,62 @@ func parseRunRecommendation(text string) (command, reason string, ok bool) {
 	return command, reason, true
 }
 
+func parseConversationCommandProposal(text string) (command, reason string, ok bool) {
+	if command, reason, ok := parseRunRecommendation(text); ok {
+		return command, reason, true
+	}
+
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	commandLine := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(trimmed), "COMMAND:") {
+			commandLine = i
+			inline := strings.TrimSpace(trimmed[len("COMMAND:"):])
+			if inline != "" {
+				command = inline
+			}
+			break
+		}
+	}
+	if commandLine < 0 {
+		return "", "", false
+	}
+
+	var reasonParts []string
+	for _, line := range lines[:commandLine] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			reasonParts = append(reasonParts, trimmed)
+		}
+	}
+	if command == "" {
+		for _, line := range lines[commandLine+1:] {
+			trimmed := strings.TrimSpace(line)
+			switch {
+			case trimmed == "":
+				if command != "" {
+					goto done
+				}
+			case strings.HasPrefix(strings.ToUpper(trimmed), "REPLY WITH:"),
+				strings.HasPrefix(strings.ToUpper(trimmed), "WHY:"),
+				strings.HasPrefix(strings.ToUpper(trimmed), "YES "):
+				goto done
+			default:
+				command = trimmed
+			}
+		}
+	}
+
+done:
+	command = compactWhitespace(command)
+	reason = compactWhitespace(strings.Join(reasonParts, " "))
+	if command == "" {
+		return "", reason, false
+	}
+	return command, reason, true
+}
+
 func formatCommandProposal(command, reason, nonce string) string {
 	var b strings.Builder
 	b.WriteString("Command:\n")
@@ -818,6 +906,22 @@ func formatCommandProposal(command, reason, nonce string) string {
 	}
 	b.WriteString("\n\nReply with:\nYES ")
 	b.WriteString(strings.TrimSpace(nonce))
+	return b.String()
+}
+
+func formatBlockedRecommendation(command, reason string, err error) string {
+	var b strings.Builder
+	b.WriteString("Command not allowed by the current policy.\n\n")
+	b.WriteString("Suggested command:\n")
+	b.WriteString(strings.TrimSpace(command))
+	if strings.TrimSpace(reason) != "" {
+		b.WriteString("\n\nWhy:\n")
+		b.WriteString(strings.TrimSpace(reason))
+	}
+	if err != nil {
+		b.WriteString("\n\nPolicy result:\n")
+		b.WriteString(strings.TrimSpace(err.Error()))
+	}
 	return b.String()
 }
 

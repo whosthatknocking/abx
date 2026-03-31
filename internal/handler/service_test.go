@@ -44,11 +44,15 @@ func (a *fakeAgent) Check(_ context.Context) error {
 }
 
 type fakeExecutor struct {
-	output string
-	check  func(command string) error
+	output  string
+	check   func(command string) error
+	execute func(ctx context.Context, command string) (string, error)
 }
 
-func (e *fakeExecutor) Execute(_ context.Context, _ string) (string, error) {
+func (e *fakeExecutor) Execute(ctx context.Context, command string) (string, error) {
+	if e.execute != nil {
+		return e.execute(ctx, command)
+	}
 	return e.output, nil
 }
 
@@ -813,11 +817,112 @@ func TestRunIntentBlockedRecommendationReturnsExplanation(t *testing.T) {
 	if len(msgs.sent) != 1 {
 		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
 	}
-	if !strings.Contains(msgs.sent[0], "I can't propose it for approval because it is blocked by the current command policy:") {
+	if !strings.Contains(msgs.sent[0], "Command not allowed by the current policy.") {
 		t.Fatalf("expected blocked recommendation explanation, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Suggested command:\nrm -rf /") {
+		t.Fatalf("expected suggested command in blocked recommendation, got %q", msgs.sent[0])
 	}
 	if !strings.Contains(msgs.sent[0], "deny-rm-root") {
 		t.Fatalf("expected deny rule details, got %q", msgs.sent[0])
+	}
+}
+
+func TestConversationCommandProposalCreatesRealPendingApproval(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "I can't fetch real-time prices directly in this chat. If you want me to pull the latest TSLA price, I can run a command to fetch it from Yahoo Finance.\n\nCommand:\ncurl -s \"https://query1.finance.yahoo.com/v7/finance/quote?symbols=TSLA\"\n\nReply with:\nYES 0d4f8a"}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor: &fakeExecutor{
+			output: "ok",
+			check: func(command string) error {
+				if command == `curl -s "https://query1.finance.yahoo.com/v7/finance/quote?symbols=TSLA"` {
+					return nil
+				}
+				return errors.New("command blocked by policy: no allow rule matched in allowlist mode")
+			},
+		},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "what is TSLA stock price",
+	}); err != nil {
+		t.Fatalf("handle conversation command proposal: %v", err)
+	}
+
+	approval, err := repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get pending approval: %v", err)
+	}
+	if approval == nil {
+		t.Fatal("expected real pending approval to be created")
+	}
+	if approval.Command != `curl -s "https://query1.finance.yahoo.com/v7/finance/quote?symbols=TSLA"` {
+		t.Fatalf("unexpected proposed command: %q", approval.Command)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Command:\ncurl -s \"https://query1.finance.yahoo.com/v7/finance/quote?symbols=TSLA\"") {
+		t.Fatalf("unexpected proposal response: %q", msgs.sent[0])
+	}
+	if strings.Contains(msgs.sent[0], "YES 0d4f8a") {
+		t.Fatalf("expected app-generated approval token, got model token in %q", msgs.sent[0])
+	}
+}
+
+func TestConversationCommandProposalBlockedReturnsPolicyExplanation(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "I can run a command for that.\n\nCommand:\nrm -rf /\n\nReply with:\nYES deadbe"}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "rm -rf /" {
+					return errors.New("command blocked by policy: matched deny rule(s): deny-rm-root")
+				}
+				return nil
+			},
+		},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "delete everything",
+	}); err != nil {
+		t.Fatalf("handle blocked conversation command proposal: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Command not allowed by the current policy.") {
+		t.Fatalf("unexpected blocked conversation proposal response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Suggested command:\nrm -rf /") {
+		t.Fatalf("expected suggested command in blocked conversation proposal, got %q", msgs.sent[0])
 	}
 }
 
@@ -940,6 +1045,84 @@ func TestCommandOutputStoredInHistoryIsTruncatedForAgentContext(t *testing.T) {
 	}
 	if len(last.Text) >= len(msgs.sent[1]) {
 		t.Fatalf("expected stored command result to be shorter than displayed result")
+	}
+}
+
+func TestApprovalRechecksPolicyBeforeExecution(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	allowed := true
+	executed := false
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command != "pwd" {
+					return errors.New("command blocked by policy: no allow rule matched in allowlist mode")
+				}
+				if !allowed {
+					return errors.New("command blocked by policy: matched deny rule(s): deny-pwd")
+				}
+				return nil
+			},
+			execute: func(_ context.Context, command string) (string, error) {
+				executed = true
+				return "/tmp", nil
+			},
+		},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/run pwd",
+	}); err != nil {
+		t.Fatalf("handle /run pwd: %v", err)
+	}
+
+	approval, err := repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get pending approval: %v", err)
+	}
+	if approval == nil {
+		t.Fatal("expected pending approval")
+	}
+
+	allowed = false
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "YES " + approval.Nonce,
+	}); err != nil {
+		t.Fatalf("approve command after policy change: %v", err)
+	}
+
+	if executed {
+		t.Fatal("did not expect command execution after policy recheck failure")
+	}
+	if len(msgs.sent) != 2 {
+		t.Fatalf("expected proposal and policy failure response, got %d messages", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[1], "command blocked by policy: matched deny rule(s): deny-pwd") {
+		t.Fatalf("unexpected approval recheck failure response: %q", msgs.sent[1])
+	}
+	approval, err = repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get pending approval after recheck failure: %v", err)
+	}
+	if approval != nil {
+		t.Fatalf("expected pending approval to be cleared, got %#v", approval)
 	}
 }
 

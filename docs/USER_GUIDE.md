@@ -2,6 +2,12 @@
 
 `abx` is designed as a messaging-to-agent bridge. In the current v1 build, the messaging side is implemented through Signal using `signal-cli`, so the examples in this guide are Signal-specific even though the broader project direction is transport-agnostic.
 
+## Early Stage Warning
+
+- `abx` is still an early-stage project.
+- Configuration, runtime behavior, and integration interfaces may change as the project evolves.
+- If you build tooling or workflows around the current API or message behavior, expect some churn until the project stabilizes.
+
 ## Chat Types
 
 - In direct chats, only trusted numbers may interact with `abx`.

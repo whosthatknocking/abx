@@ -115,8 +115,14 @@ func (r *Repository) GetHistory(_ context.Context, conversationID, sessionID str
 		limit = 50
 	}
 	rows, err := r.query(fmt.Sprintf(`SELECT id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, mentioned_bot, created_at
-		FROM messages WHERE conversation_id = %s AND session_id = %s
-		ORDER BY datetime(created_at) ASC LIMIT %d;`, q(conversationID), q(sessionID), limit))
+		FROM (
+			SELECT id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, mentioned_bot, created_at
+			FROM messages
+			WHERE conversation_id = %s AND session_id = %s
+			ORDER BY datetime(created_at) DESC
+			LIMIT %d
+		)
+		ORDER BY datetime(created_at) ASC;`, q(conversationID), q(sessionID), limit))
 	if err != nil {
 		return nil, err
 	}

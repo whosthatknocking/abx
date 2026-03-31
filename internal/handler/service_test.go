@@ -192,3 +192,54 @@ func TestDebugModeIncludesAgentLabelInConversationResponse(t *testing.T) {
 		t.Fatalf("expected debug agent label in response, got %q", msgs.sent[0])
 	}
 }
+
+func TestDebugLabelIsNotStoredBackIntoHistory(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Debug: config.DebugConfig{Enabled: true},
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-4b-2507",
+					BaseURL:  "http://127.0.0.1:1234/v1",
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "Hello from the model."},
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	}); err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session id: %v", err)
+	}
+	history, err := repo.GetHistory(ctx, conversationID, sessionID, 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) == 0 {
+		t.Fatalf("expected history entries")
+	}
+	last := history[len(history)-1]
+	if strings.Contains(last.Text, "[agent:") {
+		t.Fatalf("expected stored assistant history without debug label, got %q", last.Text)
+	}
+}

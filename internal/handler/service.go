@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -146,6 +147,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	history = normalizeHistoryForAgent(history)
 	summary, err := s.repo.GetActiveConversationSummary(ctx, env.ConversationID)
 	if err != nil {
 		return err
@@ -180,7 +182,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		env.Sender,
 		len(strings.TrimSpace(response.Text)),
 	)
-	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.formatAgentReply(response.Text))
+	return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, strings.TrimSpace(response.Text), s.formatAgentReply(response.Text))
 }
 
 func (s *Service) handleShellRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, command string) error {
@@ -361,6 +363,10 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 }
 
 func (s *Service) sendAssistant(ctx context.Context, conversationID, sessionID string, chatType types.ChatType, text string) error {
+	return s.sendAssistantDisplay(ctx, conversationID, sessionID, chatType, text, text)
+}
+
+func (s *Service) sendAssistantDisplay(ctx context.Context, conversationID, sessionID string, chatType types.ChatType, storedText, displayText string) error {
 	msg := types.Message{
 		ID:             mustID(),
 		ConversationID: conversationID,
@@ -368,7 +374,7 @@ func (s *Service) sendAssistant(ctx context.Context, conversationID, sessionID s
 		Role:           types.RoleAssistant,
 		Kind:           types.MessageKindOutbound,
 		ChatType:       chatType,
-		Text:           text,
+		Text:           storedText,
 		CreatedAt:      time.Now(),
 	}
 	if err := s.repo.SaveMessage(ctx, conversationID, sessionID, msg); err != nil {
@@ -379,9 +385,9 @@ func (s *Service) sendAssistant(ctx context.Context, conversationID, sessionID s
 		ConversationID: conversationID,
 		SessionID:      sessionID,
 		MessageType:    "outbound",
-		Output:         text,
+		Output:         displayText,
 	})
-	return s.messenger.Send(ctx, conversationID, text)
+	return s.messenger.Send(ctx, conversationID, displayText)
 }
 
 func (s *Service) shellRequest(text string) (string, bool) {
@@ -477,6 +483,18 @@ func (s *Service) formatAgentReply(text string) string {
 		return label
 	}
 	return trimmed + "\n\n" + label
+}
+
+var debugAgentSuffixPattern = regexp.MustCompile(`(?s)\n*\[agent:\s+[^\]]+\]\s*$`)
+
+func normalizeHistoryForAgent(messages []types.Message) []types.Message {
+	out := make([]types.Message, 0, len(messages))
+	for _, msg := range messages {
+		copy := msg
+		copy.Text = strings.TrimSpace(debugAgentSuffixPattern.ReplaceAllString(copy.Text, ""))
+		out = append(out, copy)
+	}
+	return out
 }
 
 func endpointClass(baseURL string) string {

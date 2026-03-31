@@ -373,12 +373,6 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.versionText())
 	case "/config":
-		fallback := "not configured"
-		if s.config.Agent.Fallback.Provider != "" {
-			fallback = fmt.Sprintf("%s (%s)", s.config.Agent.Fallback.Model, endpointClass(s.config.Agent.Fallback.BaseURL))
-		}
-		text := fmt.Sprintf("Primary: %s (%s)\nFallback: %s\nVersion: %s",
-			s.config.Agent.Primary.Model, endpointClass(s.config.Agent.Primary.BaseURL), fallback, s.version)
 		s.audit(audit.Record{
 			Event:          "control_command",
 			ConversationID: env.ConversationID,
@@ -387,7 +381,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 			MessageType:    "control",
 			Decision:       "/config",
 		})
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, text)
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
 	case "/reset":
 		active, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
 		if err == nil && active != nil {
@@ -527,6 +521,29 @@ func (s *Service) versionText() string {
 	return text + "\nBuild: " + s.buildInfo
 }
 
+func (s *Service) configText() string {
+	lines := []string{
+		fmt.Sprintf("Messaging: %s / %s", normalizedMessagingProvider(s.config), normalizedRPCMode(s.config)),
+		fmt.Sprintf("Primary model: %s", normalizedPrimaryModel(s.config)),
+		fmt.Sprintf("Primary contract: %s", normalizedContract(s.config.Agent.Primary.Provider)),
+	}
+	if fallbackConfigured(s.config) {
+		lines = append(lines,
+			fmt.Sprintf("Fallback model: %s", strings.TrimSpace(s.config.Agent.Fallback.Model)),
+			fmt.Sprintf("Fallback contract: %s", normalizedContract(s.config.Agent.Fallback.Provider)),
+		)
+	}
+	lines = append(lines,
+		fmt.Sprintf("MCP: %s", normalizedMCPStatus(s.config)),
+		fmt.Sprintf("Storage: %s", normalizedDatabaseType(s.config)),
+		fmt.Sprintf("Command policy: %s", normalizedPolicyMode(s.config)),
+		fmt.Sprintf("Command timeout: %ds", normalizedCommandTimeout(s.config)),
+		fmt.Sprintf("Debug: %s", normalizedDebugState(s.config)),
+		fmt.Sprintf("Version: %s", strings.TrimSpace(s.version)),
+	)
+	return strings.Join(lines, "\n")
+}
+
 func exitStatus(err error) *int {
 	if err == nil {
 		return nil
@@ -658,4 +675,100 @@ func endpointClass(baseURL string) string {
 	default:
 		return "remote"
 	}
+}
+
+func normalizedMessagingProvider(cfg *config.Config) string {
+	if cfg == nil {
+		return "signal-cli"
+	}
+	value := strings.TrimSpace(cfg.Messaging.Provider)
+	if value == "" {
+		return "signal-cli"
+	}
+	return value
+}
+
+func normalizedRPCMode(cfg *config.Config) string {
+	if cfg == nil {
+		return "json-rpc"
+	}
+	value := strings.TrimSpace(cfg.Messaging.SignalCLI.RPCMode)
+	if value == "" {
+		return "json-rpc"
+	}
+	return value
+}
+
+func normalizedPrimaryModel(cfg *config.Config) string {
+	if cfg == nil {
+		return "(unset)"
+	}
+	value := strings.TrimSpace(cfg.Agent.Primary.Model)
+	if value == "" {
+		return "(unset)"
+	}
+	return value
+}
+
+func normalizedContract(provider string) string {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case "", "openai":
+		return "openai-compatible"
+	default:
+		return strings.TrimSpace(provider)
+	}
+}
+
+func fallbackConfigured(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.Agent.Fallback.Provider) != ""
+}
+
+func normalizedMCPStatus(cfg *config.Config) string {
+	if cfg == nil {
+		return "disabled"
+	}
+	enabled := cfg.MCP.EnabledServerNames()
+	if len(enabled) == 0 {
+		return "disabled"
+	}
+	return "enabled (" + strings.Join(enabled, ", ") + ")"
+}
+
+func normalizedDatabaseType(cfg *config.Config) string {
+	if cfg == nil {
+		return "sqlite"
+	}
+	value := strings.TrimSpace(cfg.Database.Type)
+	if value == "" {
+		return "sqlite"
+	}
+	return value
+}
+
+func normalizedPolicyMode(cfg *config.Config) string {
+	if cfg == nil {
+		return "allowlist"
+	}
+	value := strings.TrimSpace(cfg.Command.PolicyMode)
+	if value == "" {
+		return "allowlist"
+	}
+	return value
+}
+
+func normalizedCommandTimeout(cfg *config.Config) int {
+	if cfg == nil || cfg.Command.TimeoutSeconds <= 0 {
+		return 60
+	}
+	return cfg.Command.TimeoutSeconds
+}
+
+func normalizedDebugState(cfg *config.Config) string {
+	if cfg != nil && cfg.Debug.Enabled {
+		return "enabled"
+	}
+	return "disabled"
 }

@@ -230,7 +230,7 @@ All project documentation must live under the `docs/` directory. The repository 
 
 - **signal-cli Integration**:
   - v1 should use `signal-cli daemon` with JSON-RPC as the primary integration mode.
-  - `abx` may launch and supervise the local `signal-cli` daemon process, or connect to an already running local daemon.
+  - In v1, `abx` should connect to an already running local `signal-cli` daemon.
   - A local UNIX domain socket is preferred for JSON-RPC transport in v1. If a TCP listener is used, it must bind only to loopback.
   - Sending and receiving should be performed through structured JSON-RPC requests/events rather than parsing human-readable CLI output.
   - Signal mention metadata from incoming message events must be used for group-chat activation checks.
@@ -240,8 +240,7 @@ All project documentation must live under the `docs/` directory. The repository 
 - **Runtime Operation**:
   - `abx` must be implemented as a long-running local service rather than a one-shot command.
   - In development, `abx` should be runnable in the foreground from a terminal.
-  - For normal macOS usage, `abx` should support being run under `launchd` so it can start automatically and restart if it exits unexpectedly.
-  - On startup, `abx` should validate configuration, initialize persistence, connect to or launch `signal-cli`, and then begin processing events continuously until shutdown.
+  - On startup, `abx` should validate configuration, initialize persistence, connect to the configured `signal-cli` daemon, and then begin processing events continuously until shutdown.
   - Shutdown should be graceful: stop receiving new work, finish or cancel in-flight operations safely, and persist any necessary pending state.
 
 - **Message Acceptance Rules**:
@@ -299,7 +298,7 @@ All project documentation must live under the `docs/` directory. The repository 
   - The system must support dedicated slash-style commands such as `/version`, `/config`, and `/reset`.
   - These commands are handled by the application directly and do not require agent inference to route them.
   - `/version` returns the running application version and, if available, build metadata.
-  - `/config` returns a safe configuration summary that confirms which agent provider and model are currently configured.
+  - `/config` returns a safe normalized runtime summary of the active messaging, agent, MCP, storage, and command-policy configuration.
   - `/reset` performs a soft reset of the active conversation session for the current chat context.
   - A soft reset must preserve historical records for audit and diagnostics while starting a fresh active conversation context for future agent requests.
   - `/reset` must clear any active pending approval for the current conversation context and archive or detach the previous active summary/history from the new active session.
@@ -307,12 +306,21 @@ All project documentation must live under the `docs/` directory. The repository 
   - `/reset` should return a confirmation message such as `Conversation context reset for this chat.`
   - `/config` must never expose secrets such as API keys, tokens, or full sensitive file paths.
   - `/config` may expose only the following fields in v1:
-    1. Primary agent provider name
-    2. Primary agent model name
-    3. Whether a fallback agent is configured
-    4. Fallback agent provider name
-    5. Fallback agent model name
-    6. Application version
+    1. Messaging provider name
+    2. Messaging runtime mode
+    3. Primary agent model name
+    4. Primary agent contract name
+    5. Optional fallback agent model name
+    6. Optional fallback agent contract name
+    7. MCP enabled/disabled state and enabled MCP server names
+    8. Storage backend name
+    9. Command policy mode
+    10. Command timeout
+    11. Debug enabled/disabled state
+    12. Application version
+  - `/config` values should be normalized to their effective runtime values where defaults apply.
+  - The fallback section is optional and should be omitted entirely when no fallback agent is configured.
+  - In v1, the primary and fallback contract names should describe the agent API contract in use, such as `openai-compatible`, rather than exposing internal locality labels.
   - `/config` must not expose API keys, tokens, raw environment variable values, full filesystem paths, phone numbers, trusted number lists, or exact endpoint URLs.
   - Built-in control commands must follow the same trust rules as all other interactions:
     1. In 1:1 chats, only trusted senders may invoke them.
@@ -322,7 +330,8 @@ All project documentation must live under the `docs/` directory. The repository 
   - Agent proposes command → Bot sends confirmation request.
   - Approval must be bound to a specific pending command ID and short-lived nonce.
   - Any trusted sender who is permitted to interact with the system may approve a pending command by replying with the exact approval token for that request (for example `YES 482731`), not a bare `YES`.
-  - Any other response cancels the proposal.
+  - Any other trusted response cancels the proposal for that chat.
+  - After cancellation, the same message should continue through normal message classification and be handled as a conversational request, built-in control command, or a new shell-command request as appropriate.
 
 - **Persistence**: SQLite file stored under `~/.local/share/abx/app.db` by default.
 
@@ -384,10 +393,11 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
 
 ## 10. Future Milestones
 
-### MCP Integration (Post-v1)
+### MCP Integration (Post-v1 / Transitional Local Support)
 
 - `abx` should support optional Model Context Protocol (MCP) integration as a future extension for safe, structured tool and context access.
-- MCP is out of scope for v1 and must not be required for the core messaging, approval, or shell-command execution flow.
+- MCP is not required for the core messaging, approval, or shell-command execution flow in v1.
+- In the current implementation, `abx` may forward configured MCP integration names to compatible local agent endpoints, but this should be treated as transitional local-agent support rather than complete MCP product support.
 - The goal of MCP support is to give agents access to read-oriented capabilities that do not fit the shell approval model well, such as:
   1. Current local date and time
   2. Weather and other live informational lookups
@@ -396,7 +406,7 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
   5. Other structured internal data sources
 - MCP-enabled capabilities should be explicitly configured and disabled by default.
 - MCP server definitions should be stored in `config.toml`, with each server independently enabled or disabled by configuration.
-- MCP tool calls must be auditable, including tool name, requesting conversation, requesting sender, timestamps, and whether the call succeeded or failed.
+- Full MCP tool-call auditing is a post-v1 requirement. The current implementation may log and audit the surrounding chat request, but it does not yet provide first-class per-tool MCP execution audit records.
 - MCP access control must be independent from shell command approval. Read-only MCP tools should not automatically inherit permission to execute shell commands.
 - Future MCP design should prefer a small allowlisted set of read-only tools before any broader tool execution model is considered.
 - The system should clearly distinguish between:
@@ -405,6 +415,12 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
   3. Shell commands that require explicit approval
 - If MCP support is added, `/config` should indicate whether MCP is enabled and which tool families are configured, without exposing secrets or sensitive endpoints.
 - Initial post-v1 MCP support should prioritize safe utility tools such as `time.now`, `weather.current`, and `system.version` before higher-risk integrations.
+
+### Runtime Packaging (Post-v1)
+
+- `abx` should eventually be able to launch and supervise the local `signal-cli` daemon instead of requiring it to be pre-started by the operator.
+- `abx` should eventually support a `launchd` plist and installation workflow for normal macOS background-service usage.
+- Future packaging work should define restart policy, stdout/stderr capture, and operator-facing install/update commands for both `abx` and `signal-cli`.
 
 ## 11. Non-Goals for v1 (macOS)
 
@@ -419,6 +435,11 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
 1. **Install signal-cli on macOS**: `brew install signal-cli`
 2. **Register your Signal account** with signal-cli (run `signal-cli register +1xxxxxxxxxx` etc.)
 3. **Create config directory**: `mkdir -p ~/.config/abx`
-4. **Copy and configure**: `config.toml.example` → `~/.config/abx/config.toml` and edit values (especially API key and trusted numbers)
-5. **Build**: `go build -o abx ./cmd/abx`
-6. **Run**: `./abx` (or move binary to `/usr/local/bin/abx`)
+4. **Copy and configure**: `config.toml.example` → `~/.config/abx/config.toml` and edit values.
+   - Configure trusted numbers and command allow rules.
+   - For remote OpenAI use, configure `agent.primary.api_key` and `agent.primary.model`.
+   - For local OpenAI-compatible endpoints such as LM Studio, configure `base_url` and `model`; `api_key` may be omitted if the local endpoint does not require one.
+   - If you want local MCP-style integrations with a compatible local agent endpoint, enable the desired `[[mcp.servers]]` entries.
+5. **Start signal-cli daemon**: Run `signal-cli daemon` in JSON-RPC mode before starting `abx`.
+6. **Build**: `make build`
+7. **Run**: `./abx` (or move binary to `/usr/local/bin/abx`)

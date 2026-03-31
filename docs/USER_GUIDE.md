@@ -56,7 +56,7 @@
 ## Control Commands
 
 - `/version`: show the running application version and build metadata when available
-- `/config`: show a safe summary of the configured agent provider/model
+- `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, optional fallback, MCP visibility, storage, command policy, debug state, and version
 - `/reset`: start a fresh active session for the current chat while preserving historical state
 
 ## Resetting Context

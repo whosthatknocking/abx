@@ -93,6 +93,7 @@ rpc_port = 7583
 - Shell commands are blocked unless they match an enabled allow rule.
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.
 - `/version` includes build metadata when it is available in the binary.
+- `/config` reports normalized, non-secret runtime settings including messaging mode, agent contract/model, MCP visibility, storage, command policy, debug state, and version.
 
 ## Notes
 

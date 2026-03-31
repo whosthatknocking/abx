@@ -57,9 +57,27 @@ func TestConfigCommandIsHandledLocally(t *testing.T) {
 	svc := NewService(Options{
 		Version: "test",
 		Config: &config.Config{
+			Messaging: config.MessagingConfig{
+				Provider: "signal-cli",
+				SignalCLI: config.SignalCLIConfig{
+					RPCMode: "json-rpc",
+				},
+			},
 			Agent: config.AgentConfig{
 				Primary:  config.ProviderConfig{Provider: "openai", Model: "gpt-4o-mini"},
 				Fallback: config.ProviderConfig{Provider: "openai", Model: "llama3.2", BaseURL: "http://127.0.0.1:1234/v1"},
+			},
+			MCP: config.MCPConfig{
+				Servers: []config.MCPServerConfig{
+					{Name: "mcp/playwright", Enabled: true},
+					{Name: "mcp/weather", Enabled: false},
+				},
+			},
+			Debug:    config.DebugConfig{Enabled: true},
+			Database: config.DatabaseConfig{Type: "sqlite"},
+			Command: config.CommandConfig{
+				TimeoutSeconds: 90,
+				PolicyMode:     "allowlist",
 			},
 			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
 		},
@@ -82,10 +100,93 @@ func TestConfigCommandIsHandledLocally(t *testing.T) {
 	if len(msgs.sent) != 1 {
 		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
 	}
-	if !strings.Contains(msgs.sent[0], "Primary: gpt-4o-mini (remote)") {
+	if !strings.Contains(msgs.sent[0], "Messaging: signal-cli / json-rpc") {
 		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
 	}
-	if !strings.Contains(msgs.sent[0], "Fallback: llama3.2 (local)") {
+	if !strings.Contains(msgs.sent[0], "Primary model: gpt-4o-mini") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Primary contract: openai-compatible") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Fallback model: llama3.2") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Fallback contract: openai-compatible") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "MCP: enabled (mcp/playwright)") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Storage: sqlite") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Command policy: allowlist") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Command timeout: 90s") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Debug: enabled") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Version: test") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+}
+
+func TestConfigCommandOmitsFallbackAndUsesNormalizedDefaults(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{Model: "qwen/qwen3-4b-2507"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/config",
+	})
+	if err != nil {
+		t.Fatalf("handle /config: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if strings.Contains(msgs.sent[0], "Fallback model:") {
+		t.Fatalf("did not expect fallback details in /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Messaging: signal-cli / json-rpc") {
+		t.Fatalf("expected normalized messaging defaults, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Primary contract: openai-compatible") {
+		t.Fatalf("expected normalized contract, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "MCP: disabled") {
+		t.Fatalf("expected normalized MCP state, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Storage: sqlite") {
+		t.Fatalf("expected normalized storage, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Command policy: allowlist") {
+		t.Fatalf("expected normalized policy mode, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Command timeout: 60s") {
+		t.Fatalf("expected normalized command timeout, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Debug: disabled") {
 		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
 	}
 }

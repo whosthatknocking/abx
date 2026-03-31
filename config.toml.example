@@ -1,0 +1,71 @@
+# Messaging Configuration
+[messaging]
+provider = "signal-cli"
+
+[messaging.signal_cli]
+binary_path = "/opt/homebrew/bin/signal-cli"
+account = "+16505551234"
+data_dir = "~/.local/share/signal-cli"
+rpc_mode = "json-rpc"
+rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
+# rpc_host = "127.0.0.1"
+# rpc_port = 7583
+
+# Agent Configuration
+[agent.primary]
+provider = "openai"
+api_key = "sk-..."
+model = "gpt-4o-mini"
+
+[agent.fallback]
+provider = "openai"
+base_url = "http://localhost:11434/v1"
+model = "llama3.2"
+
+# Security
+[security]
+trusted_numbers = [
+  "+15551234567",
+  "+15557654321"
+]
+
+# Audit Logging
+[audit]
+file_path = "~/.local/share/abx/audit.log"
+retention_days = 30
+max_output_bytes = 8192
+
+# Database
+[database]
+type = "sqlite"
+dsn = "~/.local/share/abx/app.db"
+
+# Command settings
+[command]
+timeout_seconds = 60
+work_dir = "~/abx/workspace"
+policy_mode = "allowlist"
+
+[[command.policy.rules]]
+id = "allow-pwd"
+enabled = true
+action = "allow"
+match_type = "exact"
+pattern = "pwd"
+description = "Allow checking the current working directory"
+
+[[command.policy.rules]]
+id = "allow-ls"
+enabled = true
+action = "allow"
+match_type = "regex"
+pattern = '^ls( .*)?$'
+description = "Allow basic directory listing commands"
+
+[[command.policy.rules]]
+id = "allow-git-status"
+enabled = true
+action = "allow"
+match_type = "exact"
+pattern = "git status"
+description = "Allow read-only git status inspection"

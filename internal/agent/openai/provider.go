@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -19,18 +18,21 @@ import (
 type Provider struct {
 	cfg    config.ProviderConfig
 	client *http.Client
-	logger *log.Logger
 }
 
 var _ agent.Provider = (*Provider)(nil)
 
-func New(cfg config.ProviderConfig, logger *log.Logger) *Provider {
+// New returns an OpenAI-compatible provider.
+//
+// The same implementation is used for both remote OpenAI-style APIs and local
+// OpenAI-compatible endpoints such as LM Studio. When local MCP integrations
+// are enabled, the provider switches to LM Studio's native chat endpoint.
+func New(cfg config.ProviderConfig) *Provider {
 	return &Provider{
 		cfg: cfg,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		logger: logger,
 	}
 }
 
@@ -124,7 +126,21 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 }
 
 func (p *Provider) Check(ctx context.Context) error {
+	// Prefer checking the specific configured model when the backend supports
+	// it, but fall back to the model list for OpenAI-compatible servers that do
+	// not expose GET /models/{id}.
 	url := strings.TrimRight(p.baseURL(), "/") + "/models/" + p.cfg.Model
+	if err := p.checkURL(ctx, url); err == nil {
+		return nil
+	}
+	fallbackURL := strings.TrimRight(p.baseURL(), "/") + "/models"
+	if err := p.checkURL(ctx, fallbackURL); err != nil {
+		return fmt.Errorf("openai connectivity check failed for %s and %s: %w", url, fallbackURL, err)
+	}
+	return nil
+}
+
+func (p *Provider) checkURL(ctx context.Context, url string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -183,6 +199,8 @@ func (p *Provider) nativeLMStudioBaseURL() string {
 
 func (p *Provider) chatRequestBody(messages []types.Message) map[string]any {
 	if p.usesNativeLMStudioChat() {
+		// LM Studio's native MCP-aware endpoint accepts a single transcript string
+		// plus integrations, not OpenAI-style role/content messages.
 		transcriptMessages := p.withMCPSystemPrompt(messages)
 		return map[string]any{
 			"model":        p.cfg.Model,
@@ -281,6 +299,8 @@ func toChatMessages(messages []types.Message) []map[string]string {
 }
 
 func toLMStudioInput(messages []types.Message) string {
+	// Preserve the role-annotated transcript because LM Studio's native endpoint
+	// expects one input string rather than structured chat messages.
 	parts := make([]string, 0, len(messages))
 	for _, msg := range messages {
 		role := string(msg.Role)

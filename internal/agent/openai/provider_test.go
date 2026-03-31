@@ -1,8 +1,10 @@
 package openai
 
 import (
-	"io"
-	"log"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -15,7 +17,7 @@ func TestChatRequestBodyIncludesIntegrationsForLocalEndpoint(t *testing.T) {
 		BaseURL:      "http://127.0.0.1:1234/v1",
 		Model:        "mistralai/magistral-small-2509",
 		Integrations: []string{"mcp/playwright"},
-	}, log.New(io.Discard, "", 0))
+	})
 
 	body := provider.chatRequestBody([]types.Message{{
 		Role: types.RoleUser,
@@ -48,7 +50,7 @@ func TestChatRequestBodyOmitsIntegrationsForRemoteEndpoint(t *testing.T) {
 	provider := New(config.ProviderConfig{
 		BaseURL: "https://api.example.test/v1",
 		Model:   "gpt-5-nano",
-	}, log.New(io.Discard, "", 0))
+	})
 
 	body := provider.chatRequestBody([]types.Message{{
 		Role: types.RoleUser,
@@ -67,7 +69,7 @@ func TestChatRequestBodyOmitsIntegrationsWhenNoServersAreEnabled(t *testing.T) {
 	provider := New(config.ProviderConfig{
 		BaseURL: "http://127.0.0.1:1234/v1",
 		Model:   "mistralai/magistral-small-2509",
-	}, log.New(io.Discard, "", 0))
+	})
 
 	body := provider.chatRequestBody([]types.Message{{
 		Role: types.RoleUser,
@@ -87,7 +89,7 @@ func TestDecodeLMStudioChatResponse(t *testing.T) {
 		BaseURL:      "http://127.0.0.1:1234/v1",
 		Model:        "mistralai/magistral-small-2509",
 		Integrations: []string{"mcp/playwright"},
-	}, log.New(io.Discard, "", 0))
+	})
 
 	resp, err := provider.decodeLMStudioChatResponse(strings.NewReader(`{
 		"output": [
@@ -108,7 +110,7 @@ func TestDecodeLMStudioInvalidToolCall(t *testing.T) {
 		BaseURL:      "http://127.0.0.1:1234/v1",
 		Model:        "mistralai/magistral-small-2509",
 		Integrations: []string{"mcp/playwright"},
-	}, log.New(io.Discard, "", 0))
+	})
 
 	_, err := provider.decodeLMStudioChatResponse(strings.NewReader(`{
 		"output": [
@@ -143,7 +145,7 @@ func TestWithMCPSystemPromptPrependsSystemInstruction(t *testing.T) {
 		BaseURL:      "http://127.0.0.1:1234/v1",
 		Model:        "mistralai/magistral-small-2509",
 		Integrations: []string{"mcp/playwright"},
-	}, log.New(io.Discard, "", 0))
+	})
 
 	messages := provider.withMCPSystemPrompt([]types.Message{{
 		Role: types.RoleUser,
@@ -166,7 +168,7 @@ func TestFormatAPIErrorLMStudioPermissionDenied(t *testing.T) {
 		BaseURL:      "http://127.0.0.1:1234/v1",
 		Model:        "mistralai/magistral-small-2509",
 		Integrations: []string{"mcp/playwright"},
-	}, log.New(io.Discard, "", 0))
+	})
 
 	err := provider.formatAPIError(403, "403 Forbidden", `{
 		"error": {
@@ -189,7 +191,7 @@ func TestFormatAPIErrorLMStudioIntegrationsRejected(t *testing.T) {
 		BaseURL:      "http://127.0.0.1:1234/v1",
 		Model:        "mistralai/magistral-small-2509",
 		Integrations: []string{"mcp/playwright"},
-	}, log.New(io.Discard, "", 0))
+	})
 
 	err := provider.formatAPIError(400, "400 Bad Request", `{
 		"error": {
@@ -204,5 +206,36 @@ func TestFormatAPIErrorLMStudioIntegrationsRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "LM Studio rejected the configured MCP integrations") {
 		t.Fatalf("unexpected integrations error %q", err)
+	}
+}
+
+func TestCheckFallsBackToModelsList(t *testing.T) {
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/models/gpt-5-nano":
+			http.Error(w, "not found", http.StatusNotFound)
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "gpt-5-nano"}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := New(config.ProviderConfig{
+		BaseURL: server.URL + "/v1",
+		Model:   "gpt-5-nano",
+	})
+
+	if err := provider.Check(context.Background()); err != nil {
+		t.Fatalf("expected fallback connectivity check to succeed, got %v", err)
+	}
+	if len(requested) != 2 || requested[0] != "/v1/models/gpt-5-nano" || requested[1] != "/v1/models" {
+		t.Fatalf("unexpected connectivity check sequence: %#v", requested)
 	}
 }

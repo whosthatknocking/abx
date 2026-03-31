@@ -55,10 +55,10 @@ func main() {
 		log.Fatalf("init command executor: %v", err)
 	}
 
-	primaryAgent := openai.New(cfg.Agent.Primary, logger)
+	primaryAgent := openai.New(cfg.Agent.Primary)
 	var runtimeAgent agent.Provider = primaryAgent
 	if cfg.Agent.Fallback.Provider != "" {
-		fallbackAgent := openai.New(cfg.Agent.Fallback, logger)
+		fallbackAgent := openai.New(cfg.Agent.Fallback)
 		runtimeAgent = agent.NewFallback(primaryAgent, fallbackAgent)
 	}
 	messenger := signalcli.New(cfg.Messaging.SignalCLI, logger)

@@ -238,6 +238,8 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 }
 
 func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
+	// Treat obviously command-shaped input as a direct command path so policy
+	// errors are reported immediately instead of being reframed as agent intent.
 	if looksLikeExactCommand(input) {
 		if err := s.executor.Check(input); err != nil {
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", err))
@@ -775,6 +777,8 @@ func (s *Service) runRecommendationMessages(ctx context.Context, conversationID 
 		summary = desiredSummary
 	}
 	messages := prependSummaryMessage(recentHistory, summary)
+	// The agent must answer in a tight machine-readable format because the
+	// recommendation parser only accepts COMMAND:/WHY: lines.
 	instruction := types.Message{
 		Role: types.RoleSystem,
 		Text: "You are helping with `/run` in a local macOS shell environment. If the latest user message contains a shell command already, preserve it. Otherwise, recommend exactly one minimal bash command that best satisfies the user's intent. Prefer read-only commands when possible. Return exactly this format:\nCOMMAND: <single shell command>\nWHY: <one short sentence>\nIf you cannot recommend a command safely, return:\nCOMMAND:\nWHY: <brief reason>",
@@ -783,6 +787,8 @@ func (s *Service) runRecommendationMessages(ctx context.Context, conversationID 
 }
 
 func parseRunRecommendation(text string) (command, reason string, ok bool) {
+	// Keep parsing deliberately strict so malformed model output cannot be
+	// mistaken for an executable shell command recommendation.
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -816,6 +822,8 @@ func formatCommandProposal(command, reason, nonce string) string {
 
 func formatCommandResultMessage(output string, execErr error) (storedText, displayText string) {
 	output = strings.TrimSpace(output)
+	// Keep the full output for the user-facing reply, but store a bounded version
+	// in history so recent command output does not overwhelm future agent context.
 	contextOutput, truncated := truncateForAgentContext(output, commandContextChars)
 
 	if execErr != nil {
@@ -847,6 +855,8 @@ func truncateForAgentContext(text string, maxChars int) (string, bool) {
 }
 
 func looksLikeExactCommand(input string) bool {
+	// Bias toward treating shell-shaped input as an explicit command so `/run`
+	// remains predictable and doesn't silently reinterpret commands as intents.
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return false

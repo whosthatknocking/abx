@@ -276,6 +276,66 @@ func TestGroupMentionRunIntentWithNonAtPrefixIsHandledLocally(t *testing.T) {
 	}
 }
 
+func TestGroupMentionApprovalWithPrefixIsHandledLocally(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor: &fakeExecutor{
+			output: "/tmp",
+			check: func(command string) error {
+				if command == "pwd" {
+					return nil
+				}
+				return errors.New("command blocked by policy: no allow rule matched in allowlist mode")
+			},
+		},
+	})
+
+	ctx := context.Background()
+	conversationID := "group:test"
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		MentionedBot:   true,
+		Text:           "@abx /run pwd",
+	}); err != nil {
+		t.Fatalf("handle group /run pwd: %v", err)
+	}
+
+	approval, err := repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get pending approval: %v", err)
+	}
+	if approval == nil {
+		t.Fatal("expected pending approval")
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		MentionedBot:   true,
+		Text:           "\uFFFC YES " + approval.Nonce,
+	}); err != nil {
+		t.Fatalf("handle group approval: %v", err)
+	}
+	if len(msgs.sent) != 2 {
+		t.Fatalf("expected proposal and command result, got %d messages", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[1], "Command completed.") {
+		t.Fatalf("unexpected group approval response: %q", msgs.sent[1])
+	}
+}
+
 func TestGroupMentionControlCommandIsHandledLocally(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

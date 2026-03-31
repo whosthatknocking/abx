@@ -893,6 +893,9 @@ func normalizeIncomingText(env types.IncomingEnvelope) string {
 		return text
 	}
 	text = stripLeadingMentions(text)
+	if approvalText, ok := extractApprovalText(text); ok {
+		return approvalText
+	}
 	if commandText, ok := extractLeadingSlashCommand(text); ok {
 		return commandText
 	}
@@ -924,6 +927,17 @@ func extractLeadingSlashCommand(text string) (string, bool) {
 			if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
 				return strings.TrimSpace(text[idx:]), true
 			}
+		}
+	}
+	return "", false
+}
+
+func extractApprovalText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if idx := strings.Index(text, "YES "); idx >= 0 {
+		prefix := strings.TrimSpace(text[:idx])
+		if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
+			return strings.TrimSpace(text[idx:]), true
 		}
 	}
 	return "", false

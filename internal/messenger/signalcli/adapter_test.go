@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"reflect"
 	"testing"
@@ -88,6 +89,15 @@ func TestAwaitRPCResponseReturnsRPCError(t *testing.T) {
 	}
 	if got := err.Error(); got != "signal-cli rpc error -32602: bad params" {
 		t.Fatalf("unexpected rpc error: %s", got)
+	}
+}
+
+func TestIsMethodNotImplementedError(t *testing.T) {
+	if !isMethodNotImplementedError(errors.New("signal-cli rpc error -32601: Method not implemented")) {
+		t.Fatal("expected method-not-implemented error to be detected")
+	}
+	if isMethodNotImplementedError(errors.New("signal-cli rpc error -32602: bad params")) {
+		t.Fatal("did not expect bad-params error to be treated as method-not-implemented")
 	}
 }
 

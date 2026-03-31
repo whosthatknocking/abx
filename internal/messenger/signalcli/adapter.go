@@ -92,7 +92,11 @@ func (a *Adapter) runSession(ctx context.Context, handler func(types.IncomingEnv
 	if _, err := a.sendRPC(ctx, conn, reader, "subscribe", map[string]any{
 		"account": a.cfg.Account,
 	}); err != nil {
-		return fmt.Errorf("subscribe to signal-cli events: %w", err)
+		if isMethodNotImplementedError(err) {
+			a.logger.Printf("signal-cli subscribe unsupported; continuing without explicit subscription")
+		} else {
+			return fmt.Errorf("subscribe to signal-cli events: %w", err)
+		}
 	}
 
 	for {
@@ -329,4 +333,11 @@ func envelopeTimestamp(envelope map[string]any) time.Time {
 		return time.Now()
 	}
 	return time.UnixMilli(ms)
+}
+
+func isMethodNotImplementedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "method not implemented")
 }

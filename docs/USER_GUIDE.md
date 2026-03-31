@@ -11,6 +11,7 @@
 - Start `signal-cli` in JSON-RPC daemon mode before starting `abx`.
 - By default, `abx` expects a local UNIX socket at `~/.local/share/signal-cli/json-rpc.sock`.
 - If you use a local OpenAI-compatible agent such as LM Studio, you can enable or disable forwarded MCP server names with `[[mcp.servers]]` in `config.toml`.
+- For LM Studio MCP access through the API, LM Studio must have `Allow calling servers from mcp.json` enabled, and that setting requires authentication to be enabled in LM Studio first.
 
 ## Message Types
 
@@ -24,6 +25,7 @@
 - Trusted users can ask normal questions such as explanations, summaries, or brainstorming prompts.
 - In v1, responses come only from the configured model plus locally stored conversation context.
 - Live external lookups such as current weather or news are not available in v1.
+- If you use a local LM Studio-compatible endpoint with enabled `[[mcp.servers]]`, `abx` will route those requests through LM Studio's MCP-aware chat path for supported tasks such as browser access.
 - If `[debug].enabled = true`, normal chat replies also include which configured agent responded.
 
 ## Approval Flow

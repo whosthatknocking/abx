@@ -38,7 +38,11 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - TOML parsing is implemented locally with stdlib-only code
 - The Signal adapter now includes JSON-RPC socket/TCP transport scaffolding, but still needs production hardening against the exact `signal-cli` event shapes used in your environment
 - OpenAI chat-completions integration is implemented with the standard library HTTP client
-- Enabled `[[mcp.servers]]` entries are forwarded as `integrations` only for local OpenAI-compatible endpoints
+- Local chat routing now has two paths:
+  - normal local or remote chat uses OpenAI-compatible `/v1/chat/completions`
+  - local chat with enabled `[[mcp.servers]]` uses LM Studio native `/api/v1/chat`
+- On the LM Studio MCP path, `abx` sends a transcript-style `input`, `integrations`, and a short system instruction telling the model to use available integrations for browser/live-data tasks
+- LM Studio requires `Require Authentication` to be enabled before `Allow calling servers from mcp.json` can be turned on for API-driven MCP usage
 - SQLite persistence uses the local `sqlite3` CLI
 - Command execution is deny-by-default and policy-validated at startup
 - Runtime logs now include higher-level interaction tracing for accepted messages, agent request start/end, command proposal creation, approvals, and command execution outcomes
@@ -59,3 +63,4 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 
 - The `signal-cli` transport layer still needs production validation against real daemon traffic and broader event parsing coverage
 - The current TOML parser intentionally supports the project’s config shape, not the full TOML language
+- LM Studio MCP behavior still depends on the selected model and LM Studio-side MCP permissions; `abx` can route and instruct correctly, but it cannot force tool use if the local model refuses or lacks capability

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -40,7 +41,7 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types
 		return types.AgentResponse{}, err
 	}
 
-	url := strings.TrimRight(p.baseURL(), "/") + "/chat/completions"
+	url := p.chatURL()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
 		return types.AgentResponse{}, err
@@ -57,9 +58,19 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
+		bodyText, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if trimmed := strings.TrimSpace(string(bodyText)); trimmed != "" {
+			return types.AgentResponse{}, p.formatAPIError(resp.StatusCode, resp.Status, trimmed)
+		}
 		return types.AgentResponse{}, fmt.Errorf("openai request failed: %s", resp.Status)
 	}
+	if p.usesNativeLMStudioChat() {
+		return p.decodeLMStudioChatResponse(resp.Body)
+	}
+	return p.decodeOpenAIChatResponse(resp.Body)
+}
 
+func (p *Provider) decodeOpenAIChatResponse(body io.Reader) (types.AgentResponse, error) {
 	var decoded struct {
 		Choices []struct {
 			Message struct {
@@ -67,13 +78,49 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(body).Decode(&decoded); err != nil {
 		return types.AgentResponse{}, fmt.Errorf("decode openai response: %w", err)
 	}
 	if len(decoded.Choices) == 0 {
 		return types.AgentResponse{}, fmt.Errorf("openai response did not contain any choices")
 	}
 	return types.AgentResponse{Text: strings.TrimSpace(decoded.Choices[0].Message.Content)}, nil
+}
+
+func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentResponse, error) {
+	var decoded struct {
+		Output []struct {
+			Type     string `json:"type"`
+			Content  string `json:"content"`
+			Reason   string `json:"reason"`
+			Tool     string `json:"tool"`
+			Provider struct {
+				Type string `json:"type"`
+			} `json:"provider_info"`
+		} `json:"output"`
+	}
+	if err := json.NewDecoder(body).Decode(&decoded); err != nil {
+		return types.AgentResponse{}, fmt.Errorf("decode LM Studio response: %w", err)
+	}
+
+	parts := make([]string, 0, len(decoded.Output))
+	for _, item := range decoded.Output {
+		if item.Type == "message" {
+			text := strings.TrimSpace(item.Content)
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	if len(parts) > 0 {
+		return types.AgentResponse{Text: strings.Join(parts, "\n\n")}, nil
+	}
+	for _, item := range decoded.Output {
+		if item.Type == "invalid_tool_call" {
+			return types.AgentResponse{}, fmt.Errorf("LM Studio rejected tool call: %s", strings.TrimSpace(item.Reason))
+		}
+	}
+	return types.AgentResponse{}, fmt.Errorf("LM Studio response did not contain any message output")
 }
 
 func (p *Provider) Check(ctx context.Context) error {
@@ -112,15 +159,110 @@ func (p *Provider) isLocalEndpoint() bool {
 		strings.Contains(baseURL, "0.0.0.0")
 }
 
+func (p *Provider) usesNativeLMStudioChat() bool {
+	return p.isLocalEndpoint() && len(p.cfg.Integrations) > 0
+}
+
+func (p *Provider) chatURL() string {
+	if p.usesNativeLMStudioChat() {
+		return strings.TrimRight(p.nativeLMStudioBaseURL(), "/") + "/chat"
+	}
+	return strings.TrimRight(p.baseURL(), "/") + "/chat/completions"
+}
+
+func (p *Provider) nativeLMStudioBaseURL() string {
+	baseURL := strings.TrimRight(p.baseURL(), "/")
+	if strings.HasSuffix(baseURL, "/api/v1") {
+		return baseURL
+	}
+	if strings.HasSuffix(baseURL, "/v1") {
+		return strings.TrimSuffix(baseURL, "/v1") + "/api/v1"
+	}
+	return baseURL + "/api/v1"
+}
+
 func (p *Provider) chatRequestBody(messages []types.Message) map[string]any {
+	if p.usesNativeLMStudioChat() {
+		transcriptMessages := p.withMCPSystemPrompt(messages)
+		return map[string]any{
+			"model":        p.cfg.Model,
+			"input":        toLMStudioInput(transcriptMessages),
+			"integrations": append([]string(nil), p.cfg.Integrations...),
+			"store":        false,
+		}
+	}
 	body := map[string]any{
 		"model":    p.cfg.Model,
 		"messages": toChatMessages(messages),
 	}
-	if p.isLocalEndpoint() && len(p.cfg.Integrations) > 0 {
-		body["integrations"] = append([]string(nil), p.cfg.Integrations...)
-	}
 	return body
+}
+
+func (p *Provider) formatAPIError(statusCode int, status, body string) error {
+	if p.usesNativeLMStudioChat() {
+		if err := p.formatLMStudioError(statusCode, body); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("openai request failed: %s: %s", status, body)
+}
+
+func (p *Provider) formatLMStudioError(statusCode int, body string) error {
+	var decoded struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Param   string `json:"param"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		return nil
+	}
+
+	message := strings.TrimSpace(decoded.Error.Message)
+	if message == "" {
+		return nil
+	}
+
+	if statusCode == http.StatusForbidden && decoded.Error.Param == "integrations" {
+		integration := firstIntegrationName(p.cfg.Integrations)
+		if integration == "" {
+			integration = "configured MCP integration"
+		}
+		return fmt.Errorf("LM Studio denied MCP server %s. Check LM Studio MCP/plugin permissions and server settings.", integration)
+	}
+	if decoded.Error.Param == "integrations" {
+		return fmt.Errorf("LM Studio rejected the configured MCP integrations: %s", message)
+	}
+	return fmt.Errorf("LM Studio request failed: %s", message)
+}
+
+func (p *Provider) withMCPSystemPrompt(messages []types.Message) []types.Message {
+	if !p.usesNativeLMStudioChat() {
+		return messages
+	}
+	prompt := strings.TrimSpace(p.mcpSystemPrompt())
+	if prompt == "" {
+		return messages
+	}
+
+	out := make([]types.Message, 0, len(messages)+1)
+	out = append(out, types.Message{
+		Role: types.RoleSystem,
+		Text: prompt,
+	})
+	out = append(out, messages...)
+	return out
+}
+
+func (p *Provider) mcpSystemPrompt() string {
+	if len(p.cfg.Integrations) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"You have access to these MCP integrations: %s. When a request needs browser access, website interaction, or live external information that these integrations can provide, use them instead of saying you cannot browse or access real-time content. If an integration call fails or is denied, explain that clearly and continue with the best available help.",
+		strings.Join(p.cfg.Integrations, ", "),
+	)
 }
 
 func toChatMessages(messages []types.Message) []map[string]string {
@@ -136,4 +278,37 @@ func toChatMessages(messages []types.Message) []map[string]string {
 		})
 	}
 	return out
+}
+
+func toLMStudioInput(messages []types.Message) string {
+	parts := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		role := string(msg.Role)
+		if role == "" {
+			role = string(types.RoleUser)
+		}
+		label := "User"
+		switch types.Role(role) {
+		case types.RoleSystem:
+			label = "System"
+		case types.RoleAssistant:
+			label = "Assistant"
+		}
+		text := strings.TrimSpace(msg.Text)
+		if text == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", label, text))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func firstIntegrationName(integrations []string) string {
+	for _, name := range integrations {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			return name
+		}
+	}
+	return ""
 }

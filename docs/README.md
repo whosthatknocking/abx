@@ -1,16 +1,25 @@
 # ABX
 
-`abx` is a local macOS service that bridges Signal conversations to a configured agent, with explicit approval required before any local shell command executes.
+`abx` is a local-first service for connecting messaging apps to configurable AI agents. The architecture is intended to stay agnostic to the underlying messaging transport and agent provider, even though the current v1 implementation is built around Signal via `signal-cli` on macOS.
+
+## Objectives
+
+- Connect trusted messaging conversations to agent-backed assistance through a simple local runtime.
+- Keep messaging, agent, persistence, and execution layers modular so the system can evolve beyond a single messaging app or model API.
+- Support both conversational workflows and carefully controlled local task execution.
+- Favor auditability, explicit trust checks, and deny-by-default execution over opaque automation.
+- Stay easy to run and reason about: one binary, local config, minimal moving parts.
 
 ## Status
 
-- The project currently provides a working local scaffold for config loading, session persistence, approval handling, command policy enforcement, and OpenAI-backed conversational responses.
-- The `signal-cli` JSON-RPC integration is still a runtime skeleton and needs a production-grade event loop and send/receive implementation.
+- The project currently provides a working local scaffold for config loading, session persistence, approval handling, command policy enforcement, and agent-backed conversational responses.
+- The first messaging implementation is `signal-cli` JSON-RPC, and it still needs a production-grade event loop and send/receive implementation.
 
 ## Features
 
-- Trusted-number-only Signal interaction
-- Group-chat activation via Signal mention metadata
+- Messaging-to-agent bridge architecture with Signal as the first transport
+- Trusted-sender-only messaging interaction in v1
+- Group-chat activation via transport metadata in v1 (`signal-cli` Signal mention metadata)
 - Conversational agent responses from local context only
 - Built-in control commands: `/version`, `/config`, `/reset`
 - Deny-by-default shell execution with explicit allow rules
@@ -67,6 +76,7 @@ rpc_port = 7583
 
 ## Project Docs
 
+- [Project Specification](./PROJECT_SPEC.md)
 - [User Guide](./USER_GUIDE.md)
 - [Development](./DEVELOPMENT.md)
 

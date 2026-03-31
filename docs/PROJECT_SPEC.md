@@ -2,7 +2,15 @@
 
 ## 1. Project Overview
 
-**abx** is a lightweight, single-binary Go application that connects a locally installed signal-cli on macOS to configurable agents (starting with OpenAI-backed agents). The system is fully local, runs natively on macOS, enforces mandatory user approval for every bash command, and uses a standard macOS configuration location.
+**abx** is a lightweight, single-binary Go application for connecting messaging applications to configurable agent backends. The long-term goal is to keep the messaging layer and agent layer loosely coupled so the product is not defined by any single transport or model provider. In v1, the first concrete implementation is a macOS-native bridge from `signal-cli` to configurable agents, with mandatory approval for every bash command and a standard local configuration location.
+
+### Application Objectives
+
+- Provide a simple, local-first bridge between trusted messaging conversations and agent-assisted workflows.
+- Keep messaging transport, agent provider, persistence, and execution concerns modular so the system can evolve beyond any single vendor or protocol.
+- Support both conversational assistance and tightly controlled local task execution from a chat interface.
+- Default to explicit trust, auditability, and deny-by-default command execution instead of convenience-first automation.
+- Stay operationally lightweight: one binary, minimal dependencies, straightforward local configuration, and predictable runtime behavior.
 
 ### Key Constraints for v1:
 
@@ -17,14 +25,14 @@
 
 - **Language & Build**: Go 1.23+, single static binary optimized for macOS (GOOS=darwin GOARCH=arm64 or amd64)
 - **Platform**: macOS only for v1. Commands executed via macOS bash
-- **Messaging**: `signal-cli` local daemon with JSON-RPC as the primary integration mode
+- **Messaging**: Messaging integration should be transport-agnostic at the architecture level. In v1, `signal-cli` local daemon with JSON-RPC is the primary implementation.
   - In 1:1 chats, respond only when the sender is in `trusted_numbers`
   - In group chats, ignore all messages unless the sender is in `trusted_numbers` and the bot is explicitly mentioned according to Signal mention metadata
 - **Agent**: OpenAI as the primary agent provider (with OpenAI-compatible endpoint support for fallback/local LLMs like Ollama)
   - In v1, agent responses must come from the configured model plus locally available conversation context only
   - In v1, external tools for live data retrieval are out of scope
 - **Configuration**: TOML file at `~/.config/abx/config.toml`
-- **Runtime Model**: `abx` runs as a long-lived local process that continuously handles Signal events, approvals, and command execution
+- **Runtime Model**: `abx` runs as a long-lived local process that continuously handles messaging events, approvals, and command execution
 - **Persistence**: Abstracted repository (SQLite default, in-memory for testing)
 - **Security**:
   - Trusted Signal numbers only
@@ -36,13 +44,13 @@
 ## 3. High-Level Architecture
 
 ```
-User (trusted Signal number)
+User (trusted messaging identity)
     ↓ E2EE
-signal-cli (installed locally on macOS)
+Messaging Adapter (v1: signal-cli installed locally on macOS)
     ↓ JSON-RPC events and commands
 Go Application `abx` (single macOS binary)
     ├── Config Loader (~/.config/abx/config.toml)
-    ├── Messenger: SignalCLIAdapter
+    ├── Messenger Adapter (v1: SignalCLIAdapter)
     ├── Agent: OpenAIAdapter (primary) + Fallback logic
     ├── Repository (abstracted: SQLite / InMemory)
     ├── Approval State Machine
@@ -197,6 +205,7 @@ abx/
 ├── pkg/
 │   └── types/
 ├── docs/
+│   ├── PROJECT_SPEC.md
 │   ├── README.md
 │   ├── USER_GUIDE.md
 │   └── DEVELOPMENT.md
@@ -209,6 +218,7 @@ abx/
 
 All project documentation must live under the `docs/` directory. The repository must include the following documentation files as first-class project artifacts:
 
+- **docs/PROJECT_SPEC.md**: Product and implementation specification covering objectives, architecture, security, configuration, and milestone scope.
 - **docs/README.md**: Project overview, feature summary, install steps, configuration basics, and quick start instructions.
 - **docs/USER_GUIDE.md**: End-user workflow documentation covering trusted number behavior, 1:1 vs group chat behavior, command approval flow, and common usage examples.
 - **docs/DEVELOPMENT.md**: Developer-oriented documentation covering project structure, local setup, build/test workflow, configuration details, and implementation notes relevant to contributors.

@@ -1,5 +1,7 @@
 # Development
 
+`abx` is intended to be messaging-platform-agnostic at the architecture level. The current codebase is still v1 and therefore Signal-first, but the internal shape should continue to support future messaging adapters without redefining the application around one transport.
+
 ## Requirements
 
 - Go 1.23+
@@ -28,7 +30,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - `cmd/abx`: entrypoint
 - `internal/config`: file-based TOML loading
 - `internal/agent`: agent providers
-- `internal/messenger`: Signal adapter
+- `internal/messenger`: messaging adapters, with Signal as the current implementation
 - `internal/repository`: persistence backends
 - `internal/executor`: command policy and execution
 - `internal/handler`: runtime orchestration

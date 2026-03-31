@@ -1,5 +1,7 @@
 # User Guide
 
+`abx` is designed as a messaging-to-agent bridge. In the current v1 build, the messaging side is implemented through Signal using `signal-cli`, so the examples in this guide are Signal-specific even though the broader project direction is transport-agnostic.
+
 ## Chat Types
 
 - In direct chats, only trusted numbers may interact with `abx`.

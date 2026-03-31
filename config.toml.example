@@ -22,6 +22,17 @@ provider = "openai"
 base_url = "http://localhost:11434/v1"
 model = "llama3.2"
 
+# Optional MCP integrations for local OpenAI-compatible agents
+[mcp]
+
+[[mcp.servers]]
+name = "mcp/playwright"
+enabled = true
+
+[[mcp.servers]]
+name = "mcp/weather"
+enabled = false
+
 # Debug
 [debug]
 enabled = false

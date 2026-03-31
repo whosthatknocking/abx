@@ -81,6 +81,17 @@ provider = "openai"
 base_url = "http://localhost:11434/v1"      # Example: Ollama
 model = "llama3.2"
 
+# Optional MCP integrations for local OpenAI-compatible agents
+[mcp]
+
+[[mcp.servers]]
+name = "mcp/playwright"
+enabled = true
+
+[[mcp.servers]]
+name = "mcp/weather"
+enabled = false
+
 # Security
 [security]
 trusted_numbers = [
@@ -361,7 +372,31 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
 - Add an out-of-band confirmation step for high-risk commands.
 - Require stronger operator authentication for sensitive command classes.
 
-## 10. Non-Goals for v1 (macOS)
+## 10. Future Milestones
+
+### MCP Integration (Post-v1)
+
+- `abx` should support optional Model Context Protocol (MCP) integration as a future extension for safe, structured tool and context access.
+- MCP is out of scope for v1 and must not be required for the core messaging, approval, or shell-command execution flow.
+- The goal of MCP support is to give agents access to read-oriented capabilities that do not fit the shell approval model well, such as:
+  1. Current local date and time
+  2. Weather and other live informational lookups
+  3. Calendar or reminder data
+  4. Local file or project metadata
+  5. Other structured internal data sources
+- MCP-enabled capabilities should be explicitly configured and disabled by default.
+- MCP server definitions should be stored in `config.toml`, with each server independently enabled or disabled by configuration.
+- MCP tool calls must be auditable, including tool name, requesting conversation, requesting sender, timestamps, and whether the call succeeded or failed.
+- MCP access control must be independent from shell command approval. Read-only MCP tools should not automatically inherit permission to execute shell commands.
+- Future MCP design should prefer a small allowlisted set of read-only tools before any broader tool execution model is considered.
+- The system should clearly distinguish between:
+  1. Local prompt/runtime context injected by `abx`
+  2. MCP-backed structured context or tool calls
+  3. Shell commands that require explicit approval
+- If MCP support is added, `/config` should indicate whether MCP is enabled and which tool families are configured, without exposing secrets or sensitive endpoints.
+- Initial post-v1 MCP support should prioritize safe utility tools such as `time.now`, `weather.current`, and `system.version` before higher-risk integrations.
+
+## 11. Non-Goals for v1 (macOS)
 
 - Docker or any containerization
 - Multi-platform messaging clients
@@ -369,7 +404,7 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
 - Web UI
 - Advanced sandboxing
 
-## 11. Setup Instructions (for `docs/README.md`)
+## 12. Setup Instructions (for `docs/README.md`)
 
 1. **Install signal-cli on macOS**: `brew install signal-cli`
 2. **Register your Signal account** with signal-cli (run `signal-cli register +1xxxxxxxxxx` etc.)

@@ -24,6 +24,14 @@ func decodeConfig(tree map[string]any) (*Config, error) {
 	cfg.Agent.Primary = decodeProvider(childMap(agent, "primary"))
 	cfg.Agent.Fallback = decodeProvider(childMap(agent, "fallback"))
 
+	mcp := childMap(tree, "mcp")
+	for _, item := range childArrayMap(mcp, "servers") {
+		cfg.MCP.Servers = append(cfg.MCP.Servers, MCPServerConfig{
+			Name:    stringValue(item, "name"),
+			Enabled: boolValueDefault(item, "enabled", true),
+		})
+	}
+
 	debug := childMap(tree, "debug")
 	cfg.Debug = DebugConfig{
 		Enabled: boolValueDefault(debug, "enabled", false),

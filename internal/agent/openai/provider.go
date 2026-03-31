@@ -34,10 +34,7 @@ func New(cfg config.ProviderConfig, logger *log.Logger) *Provider {
 }
 
 func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types.Tool) (types.AgentResponse, error) {
-	body := map[string]any{
-		"model":    p.cfg.Model,
-		"messages": toChatMessages(messages),
-	}
+	body := p.chatRequestBody(messages)
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return types.AgentResponse{}, err
@@ -106,6 +103,24 @@ func (p *Provider) baseURL() string {
 		return p.cfg.BaseURL
 	}
 	return "https://api.openai.com/v1"
+}
+
+func (p *Provider) isLocalEndpoint() bool {
+	baseURL := strings.TrimSpace(strings.ToLower(p.baseURL()))
+	return strings.Contains(baseURL, "127.0.0.1") ||
+		strings.Contains(baseURL, "localhost") ||
+		strings.Contains(baseURL, "0.0.0.0")
+}
+
+func (p *Provider) chatRequestBody(messages []types.Message) map[string]any {
+	body := map[string]any{
+		"model":    p.cfg.Model,
+		"messages": toChatMessages(messages),
+	}
+	if p.isLocalEndpoint() && len(p.cfg.Integrations) > 0 {
+		body["integrations"] = append([]string(nil), p.cfg.Integrations...)
+	}
+	return body
 }
 
 func toChatMessages(messages []types.Message) []map[string]string {

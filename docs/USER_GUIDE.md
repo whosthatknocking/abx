@@ -10,6 +10,7 @@
 - Make sure your bot Signal account is already registered with `signal-cli`.
 - Start `signal-cli` in JSON-RPC daemon mode before starting `abx`.
 - By default, `abx` expects a local UNIX socket at `~/.local/share/signal-cli/json-rpc.sock`.
+- If you use a local OpenAI-compatible agent such as LM Studio, you can enable or disable forwarded MCP server names with `[[mcp.servers]]` in `config.toml`.
 
 ## Message Types
 

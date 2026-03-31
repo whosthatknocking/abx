@@ -23,9 +23,10 @@
 2. Register the bot Signal account with `signal-cli`.
 3. Copy `config.toml.example` to `~/.config/abx/config.toml`.
 4. Update the Signal account, trusted numbers, OpenAI API key, and command policy rules.
-5. Start `signal-cli` in JSON-RPC mode.
-6. Run `make build`.
-7. Start `./abx`.
+5. If you want local MCP-style integrations for a local agent endpoint, enable the desired `[[mcp.servers]]` entries.
+6. Start `signal-cli` in JSON-RPC mode.
+7. Run `make build`.
+8. Start `./abx`.
 
 ## Running `signal-cli` in JSON-RPC Mode
 
@@ -73,6 +74,7 @@ rpc_port = 7583
 
 - Configuration is file-based only in v1.
 - `agent.primary.model` is required for OpenAI.
+- `[[mcp.servers]]` controls which MCP server names are forwarded to local OpenAI-compatible endpoints as request integrations.
 - `[debug].enabled = true` appends agent identity details to normal chat responses for troubleshooting.
 - Shell commands are blocked unless they match an enabled allow rule.
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.

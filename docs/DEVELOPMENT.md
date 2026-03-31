@@ -38,6 +38,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - TOML parsing is implemented locally with stdlib-only code
 - The Signal adapter now includes JSON-RPC socket/TCP transport scaffolding, but still needs production hardening against the exact `signal-cli` event shapes used in your environment
 - OpenAI chat-completions integration is implemented with the standard library HTTP client
+- Enabled `[[mcp.servers]]` entries are forwarded as `integrations` only for local OpenAI-compatible endpoints
 - SQLite persistence uses the local `sqlite3` CLI
 - Command execution is deny-by-default and policy-validated at startup
 - Runtime logs now include higher-level interaction tracing for accepted messages, agent request start/end, command proposal creation, approvals, and command execution outcomes

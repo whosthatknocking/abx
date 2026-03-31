@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Messaging MessagingConfig
 	Agent     AgentConfig
+	MCP       MCPConfig
 	Debug     DebugConfig
 	Security  SecurityConfig
 	Audit     AuditConfig
@@ -42,11 +43,21 @@ type AgentConfig struct {
 	Fallback ProviderConfig
 }
 
+type MCPConfig struct {
+	Servers []MCPServerConfig
+}
+
+type MCPServerConfig struct {
+	Name    string
+	Enabled bool
+}
+
 type ProviderConfig struct {
-	Provider string
-	APIKey   string
-	Model    string
-	BaseURL  string
+	Provider     string
+	APIKey       string
+	Model        string
+	BaseURL      string
+	Integrations []string
 }
 
 type SecurityConfig struct {
@@ -143,6 +154,8 @@ func (c *Config) normalize() error {
 	if c.Audit.MaxOutputBytes <= 0 {
 		c.Audit.MaxOutputBytes = 8192
 	}
+	c.Agent.Primary.Integrations = c.MCP.EnabledServerNames()
+	c.Agent.Fallback.Integrations = c.MCP.EnabledServerNames()
 
 	if c.Agent.Primary.Provider == "openai" && c.Agent.Primary.Model == "" {
 		return errors.New("agent.primary.model is required for openai")
@@ -162,4 +175,21 @@ func expandHome(v string) string {
 		return v
 	}
 	return filepath.Join(home, strings.TrimPrefix(v, "~/"))
+}
+
+func (c MCPConfig) EnabledServerNames() []string {
+	out := make([]string, 0, len(c.Servers))
+	seen := make(map[string]struct{}, len(c.Servers))
+	for _, server := range c.Servers {
+		name := strings.TrimSpace(server.Name)
+		if name == "" || !server.Enabled {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
 }

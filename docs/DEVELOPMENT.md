@@ -54,6 +54,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - `make fmt`
 - `make test`
 - `GOCACHE=$(pwd)/.gocache GOMODCACHE=$(pwd)/.gomodcache go vet ./...`
+- GitHub Actions runs formatting, tests, `go vet`, and build checks on every push and pull request via `.github/workflows/ci.yml`
 
 ## Commands
 

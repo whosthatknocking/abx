@@ -178,6 +178,7 @@ type Repository interface {
 }
 
 type CommandExecutor interface {
+    Check(command string) error
     Execute(ctx context.Context, command string) (string, error)
 }
 ```
@@ -199,7 +200,6 @@ abx/
 │   │   ├── interface.go
 │   │   ├── sqlite/
 │   │   └── inmemory/
-│   ├── approval/
 │   ├── executor/         # Simple bash executor for macOS
 │   └── handler/
 ├── pkg/

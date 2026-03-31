@@ -59,6 +59,7 @@ const (
 	recentHistoryLimit  = 20
 	summaryHistoryLimit = 100
 	summaryMaxChars     = 2000
+	commandContextChars = 1200
 )
 
 func NewService(opts Options) *Service {
@@ -237,6 +238,12 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 }
 
 func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
+	if looksLikeExactCommand(input) {
+		if err := s.executor.Check(input); err != nil {
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", err))
+		}
+		return s.proposeCommand(ctx, env, sessionID, input, "")
+	}
 	if err := s.executor.Check(input); err == nil {
 		return s.proposeCommand(ctx, env, sessionID, input, "")
 	}
@@ -401,10 +408,12 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 	})
 	if execErr != nil {
 		s.logger.Printf("command execution failed conversation=%s session=%s request_id=%s err=%v output_chars=%d", env.ConversationID, approval.SessionID, approval.RequestID, execErr, len(output))
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", strings.TrimSpace(execErr.Error()+"\n"+output)))
+		stored, display := formatCommandResultMessage(output, execErr)
+		return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, stored, display)
 	}
 	s.logger.Printf("command execution complete conversation=%s session=%s request_id=%s output_chars=%d", env.ConversationID, approval.SessionID, approval.RequestID, len(output))
-	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command completed.\n%s", strings.TrimSpace(output)))
+	stored, display := formatCommandResultMessage(output, nil)
+	return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, stored, display)
 }
 
 func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope) error {
@@ -803,6 +812,68 @@ func formatCommandProposal(command, reason, nonce string) string {
 	b.WriteString("\n\nReply with:\nYES ")
 	b.WriteString(strings.TrimSpace(nonce))
 	return b.String()
+}
+
+func formatCommandResultMessage(output string, execErr error) (storedText, displayText string) {
+	output = strings.TrimSpace(output)
+	contextOutput, truncated := truncateForAgentContext(output, commandContextChars)
+
+	if execErr != nil {
+		displayText = strings.TrimSpace(execErr.Error() + "\n" + output)
+		storedText = strings.TrimSpace(execErr.Error() + "\n" + contextOutput)
+		if truncated {
+			storedText += "\n\n[command output truncated for conversation context]"
+		}
+		return "Command failed:\n" + storedText, "Command failed:\n" + displayText
+	}
+
+	displayText = strings.TrimSpace(output)
+	storedText = contextOutput
+	if truncated {
+		storedText += "\n\n[command output truncated for conversation context]"
+	}
+	return "Command completed.\n" + strings.TrimSpace(storedText), "Command completed.\n" + strings.TrimSpace(displayText)
+}
+
+func truncateForAgentContext(text string, maxChars int) (string, bool) {
+	text = strings.TrimSpace(text)
+	if maxChars <= 0 || len(text) <= maxChars {
+		return text, false
+	}
+	if maxChars <= 3 {
+		return text[:maxChars], true
+	}
+	return text[:maxChars-3] + "...", true
+}
+
+func looksLikeExactCommand(input string) bool {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return false
+	}
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return false
+	}
+	if len(fields) == 1 {
+		return true
+	}
+	if strings.ContainsAny(input, "|&;<>()$*?[]{}=`") {
+		return true
+	}
+	for _, field := range fields[1:] {
+		if strings.HasPrefix(field, "-") || strings.HasPrefix(field, "/") || strings.HasPrefix(field, "./") || strings.HasPrefix(field, "~/") || strings.Contains(field, "=") {
+			return true
+		}
+	}
+	switch strings.ToLower(fields[0]) {
+	case "awk", "bash", "cat", "cd", "chmod", "chown", "cp", "curl", "date", "df", "du", "echo", "env",
+		"find", "git", "grep", "head", "kill", "ls", "mkdir", "mv", "pwd", "ps", "python", "python3",
+		"rm", "rmdir", "sed", "sh", "tail", "touch", "uname", "whoami":
+		return true
+	default:
+		return false
+	}
 }
 
 func endpointClass(baseURL string) string {

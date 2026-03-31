@@ -646,6 +646,128 @@ func TestRunIntentBlockedRecommendationReturnsExplanation(t *testing.T) {
 	}
 }
 
+func TestRunExactBlockedCommandDoesNotFallBackToRecommendation(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "COMMAND: whoami\nWHY: Shows the current user."}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "rm -rf /" {
+					return errors.New("command blocked by policy: matched deny rule(s): deny-rm-root")
+				}
+				return nil
+			},
+		},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/run rm -rf /",
+	})
+	if err != nil {
+		t.Fatalf("handle blocked exact /run: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "command blocked by policy: matched deny rule(s): deny-rm-root") {
+		t.Fatalf("unexpected blocked exact command response: %q", msgs.sent[0])
+	}
+	if len(agentSpy.lastMessages) != 0 {
+		t.Fatal("did not expect agent recommendation path for blocked exact command")
+	}
+}
+
+func TestCommandOutputStoredInHistoryIsTruncatedForAgentContext(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	longOutput := strings.Repeat("x", commandContextChars+200)
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor: &fakeExecutor{
+			output: longOutput,
+			check: func(command string) error {
+				if command == "pwd" {
+					return nil
+				}
+				return errors.New("blocked")
+			},
+		},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/run pwd",
+	}); err != nil {
+		t.Fatalf("handle /run pwd: %v", err)
+	}
+
+	approval, err := repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get pending approval: %v", err)
+	}
+	if approval == nil {
+		t.Fatal("expected pending approval")
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "YES " + approval.Nonce,
+	}); err != nil {
+		t.Fatalf("approve command: %v", err)
+	}
+
+	if len(msgs.sent) != 2 {
+		t.Fatalf("expected proposal and command result, got %d messages", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[1], longOutput) {
+		t.Fatalf("expected full output in displayed command result, got %q", msgs.sent[1])
+	}
+
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get session id: %v", err)
+	}
+	history, err := repo.GetHistory(ctx, conversationID, sessionID, 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) == 0 {
+		t.Fatal("expected history entries")
+	}
+	last := history[len(history)-1]
+	if !strings.Contains(last.Text, "[command output truncated for conversation context]") {
+		t.Fatalf("expected stored command result to note truncation, got %q", last.Text)
+	}
+	if len(last.Text) >= len(msgs.sent[1]) {
+		t.Fatalf("expected stored command result to be shorter than displayed result")
+	}
+}
+
 func TestConversationUsesFallbackAgentWhenPrimaryFails(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

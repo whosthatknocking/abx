@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/whosthatknocking/abx/internal/agent"
 	"github.com/whosthatknocking/abx/internal/config"
 	"github.com/whosthatknocking/abx/internal/repository/inmemory"
 	"github.com/whosthatknocking/abx/pkg/types"
@@ -26,10 +27,11 @@ func (m *fakeMessenger) Send(_ context.Context, _ string, text string) error {
 
 type fakeAgent struct {
 	response string
+	err      error
 }
 
 func (a *fakeAgent) Chat(_ context.Context, _ []types.Message, _ []types.Tool) (types.AgentResponse, error) {
-	return types.AgentResponse{Text: a.response}, nil
+	return types.AgentResponse{Text: a.response}, a.err
 }
 
 func (a *fakeAgent) Check(_ context.Context) error {
@@ -241,5 +243,37 @@ func TestDebugLabelIsNotStoredBackIntoHistory(t *testing.T) {
 	last := history[len(history)-1]
 	if strings.Contains(last.Text, "[agent:") {
 		t.Fatalf("expected stored assistant history without debug label, got %q", last.Text)
+	}
+}
+
+func TestConversationUsesFallbackAgentWhenPrimaryFails(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agent.NewFallback(&fakeAgent{err: context.DeadlineExceeded}, &fakeAgent{response: "fallback reply"}),
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	})
+	if err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "fallback reply") {
+		t.Fatalf("expected fallback response, got %q", msgs.sent[0])
 	}
 }

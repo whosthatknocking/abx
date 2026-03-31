@@ -73,11 +73,11 @@ func (a *Adapter) Send(ctx context.Context, recipient, text string) error {
 	}
 	defer conn.Close()
 
-	_, err = a.sendRPC(conn, "send", map[string]any{
-		"account":    a.cfg.Account,
-		"recipients": []string{recipient},
-		"message":    text,
-	})
+	params, err := sendParams(a.cfg.Account, recipient, text)
+	if err != nil {
+		return err
+	}
+	_, err = a.sendRPC(conn, "send", params)
 	return err
 }
 
@@ -204,4 +204,31 @@ func stringField(m map[string]any, key string) string {
 	default:
 		return fmt.Sprint(vv)
 	}
+}
+
+func sendParams(account, target, text string) (map[string]any, error) {
+	params := map[string]any{
+		"account": account,
+		"message": text,
+	}
+	switch {
+	case strings.HasPrefix(target, "direct:"):
+		recipient := strings.TrimSpace(strings.TrimPrefix(target, "direct:"))
+		if recipient == "" {
+			return nil, fmt.Errorf("signal-cli direct recipient is empty")
+		}
+		params["recipients"] = []string{recipient}
+	case strings.HasPrefix(target, "group:"):
+		groupID := strings.TrimSpace(strings.TrimPrefix(target, "group:"))
+		if groupID == "" {
+			return nil, fmt.Errorf("signal-cli group recipient is empty")
+		}
+		params["groupId"] = groupID
+	default:
+		if strings.TrimSpace(target) == "" {
+			return nil, fmt.Errorf("signal-cli recipient is empty")
+		}
+		params["recipients"] = []string{target}
+	}
+	return params, nil
 }

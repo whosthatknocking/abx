@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/whosthatknocking/abx/internal/agent"
 	"github.com/whosthatknocking/abx/internal/agent/openai"
 	"github.com/whosthatknocking/abx/internal/audit"
 	"github.com/whosthatknocking/abx/internal/config"
@@ -51,7 +52,12 @@ func main() {
 		log.Fatalf("init command executor: %v", err)
 	}
 
-	agent := openai.New(cfg.Agent.Primary, logger)
+	primaryAgent := openai.New(cfg.Agent.Primary, logger)
+	var runtimeAgent agent.Provider = primaryAgent
+	if cfg.Agent.Fallback.Provider != "" {
+		fallbackAgent := openai.New(cfg.Agent.Fallback, logger)
+		runtimeAgent = agent.NewFallback(primaryAgent, fallbackAgent)
+	}
 	messenger := signalcli.New(cfg.Messaging.SignalCLI, logger)
 	svc := handler.NewService(handler.Options{
 		Version:   version,
@@ -60,7 +66,7 @@ func main() {
 		Repo:      repo,
 		Auditor:   auditor,
 		Messenger: messenger,
-		Agent:     agent,
+		Agent:     runtimeAgent,
 		Executor:  cmdExecutor,
 	})
 
@@ -70,7 +76,7 @@ func main() {
 	logger.Printf("starting abx version=%s provider=%s model=%s database=%s", version, cfg.Agent.Primary.Provider, cfg.Agent.Primary.Model, cfg.Database.Type)
 	checkCtx, checkCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer checkCancel()
-	if err := agent.Check(checkCtx); err != nil {
+	if err := runtimeAgent.Check(checkCtx); err != nil {
 		logger.Printf("agent connection check failed provider=%s model=%s err=%v", cfg.Agent.Primary.Provider, cfg.Agent.Primary.Model, err)
 	} else {
 		logger.Printf("agent connection established provider=%s model=%s", cfg.Agent.Primary.Provider, cfg.Agent.Primary.Model)

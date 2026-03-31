@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -271,6 +273,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 			Sender:         env.Sender,
 			RequestID:      approval.RequestID,
 			MessageType:    "approval",
+			ApprovalText:   strings.TrimSpace(env.Text),
 			Decision:       "expired",
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "The pending approval token has expired.")
@@ -284,6 +287,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 			Sender:         env.Sender,
 			RequestID:      approval.RequestID,
 			MessageType:    "approval",
+			ApprovalText:   strings.TrimSpace(env.Text),
 			Decision:       "token_mismatch",
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Approval token mismatch.")
@@ -301,10 +305,12 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		ApprovedBy:     env.Sender,
 		RequestID:      approval.RequestID,
 		MessageType:    "command",
+		ApprovalText:   strings.TrimSpace(env.Text),
 		Command:        approval.Command,
 		Decision:       decisionFor(execErr),
 		Output:         output,
 		Error:          errorString(execErr),
+		ExitStatus:     exitStatus(execErr),
 	})
 	if execErr != nil {
 		s.logger.Printf("command execution failed conversation=%s session=%s request_id=%s err=%v output_chars=%d", env.ConversationID, approval.SessionID, approval.RequestID, execErr, len(output))
@@ -479,6 +485,18 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func exitStatus(err error) *int {
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return nil
+	}
+	code := exitErr.ExitCode()
+	return &code
 }
 
 func totalChars(messages []types.Message) int {

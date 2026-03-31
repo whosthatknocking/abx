@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +248,25 @@ func TestDebugLabelIsNotStoredBackIntoHistory(t *testing.T) {
 	last := history[len(history)-1]
 	if strings.Contains(last.Text, "[agent:") {
 		t.Fatalf("expected stored assistant history without debug label, got %q", last.Text)
+	}
+}
+
+func TestExitStatusExtractsWrappedExitError(t *testing.T) {
+	cmd := exec.Command("/bin/bash", "-c", "exit 9")
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected command error")
+	}
+
+	got := exitStatus(errors.New("plain error"))
+	if got != nil {
+		t.Fatalf("expected nil exit status for plain error, got %v", *got)
+	}
+
+	wrapped := errors.Join(err)
+	status := exitStatus(wrapped)
+	if status == nil || *status != 9 {
+		t.Fatalf("unexpected exit status: %#v", status)
 	}
 }
 

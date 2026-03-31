@@ -126,6 +126,9 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		MessageType:    "inbound",
 	})
 
+	if err := s.cancelPendingApprovalOnNonApproval(ctx, env, sessionID); err != nil {
+		return err
+	}
 	if s.isApproval(env.Text) {
 		return s.handleApproval(ctx, env, sessionID)
 	}
@@ -139,6 +142,32 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		return s.handleControl(ctx, env)
 	}
 	return s.handleConversation(ctx, env, sessionID)
+}
+
+func (s *Service) cancelPendingApprovalOnNonApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
+	if s.isApproval(env.Text) {
+		return nil
+	}
+	approval, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
+	if approval == nil {
+		return nil
+	}
+	if err := s.repo.ClearPendingApproval(ctx, env.ConversationID, approval.RequestID); err != nil {
+		return err
+	}
+	s.audit(audit.Record{
+		Event:          "approval_cancelled",
+		ConversationID: env.ConversationID,
+		SessionID:      approval.SessionID,
+		Sender:         env.Sender,
+		RequestID:      approval.RequestID,
+		MessageType:    "approval",
+		Decision:       "cancelled_by_other_reply",
+	})
+	return nil
 }
 
 func (s *Service) allowed(env types.IncomingEnvelope) bool {

@@ -6,6 +6,23 @@
 - `signal-cli` installed locally on macOS
 - `sqlite3` available locally when using the SQLite repository backend
 
+## Running `signal-cli` for Local Development
+
+Default UNIX socket mode:
+
+```bash
+mkdir -p ~/.local/share/signal-cli
+signal-cli daemon --socket ~/.local/share/signal-cli/json-rpc.sock
+```
+
+Loopback TCP mode:
+
+```bash
+signal-cli daemon --tcp 127.0.0.1:7583
+```
+
+If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` instead of `rpc_socket`.
+
 ## Layout
 
 - `cmd/abx`: entrypoint

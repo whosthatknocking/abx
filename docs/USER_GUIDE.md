@@ -5,6 +5,12 @@
 - In direct chats, only trusted numbers may interact with `abx`.
 - In group chats, only trusted numbers may interact and the bot must be explicitly mentioned by Signal mention metadata.
 
+## Before Using `abx`
+
+- Make sure your bot Signal account is already registered with `signal-cli`.
+- Start `signal-cli` in JSON-RPC daemon mode before starting `abx`.
+- By default, `abx` expects a local UNIX socket at `~/.local/share/signal-cli/json-rpc.sock`.
+
 ## Message Types
 
 - Normal questions are sent to the configured agent.

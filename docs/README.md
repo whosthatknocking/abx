@@ -23,8 +23,46 @@
 2. Register the bot Signal account with `signal-cli`.
 3. Copy `config.toml.example` to `~/.config/abx/config.toml`.
 4. Update the Signal account, trusted numbers, OpenAI API key, and command policy rules.
-5. Run `make build`.
-6. Start `./abx`.
+5. Start `signal-cli` in JSON-RPC mode.
+6. Run `make build`.
+7. Start `./abx`.
+
+## Running `signal-cli` in JSON-RPC Mode
+
+The default `abx` config expects `signal-cli` to expose JSON-RPC over a local UNIX socket.
+
+1. Create the Signal data directory if needed:
+
+```bash
+mkdir -p ~/.local/share/signal-cli
+```
+
+2. Start `signal-cli` in daemon mode with a UNIX socket:
+
+```bash
+signal-cli daemon --socket ~/.local/share/signal-cli/json-rpc.sock
+```
+
+3. Make sure your `~/.config/abx/config.toml` matches that socket path:
+
+```toml
+[messaging.signal_cli]
+rpc_mode = "json-rpc"
+rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
+```
+
+If you prefer TCP on loopback instead of a UNIX socket, bind only to `127.0.0.1` and update the config accordingly:
+
+```bash
+signal-cli daemon --tcp 127.0.0.1:7583
+```
+
+```toml
+[messaging.signal_cli]
+rpc_mode = "json-rpc"
+rpc_host = "127.0.0.1"
+rpc_port = 7583
+```
 
 ## Project Docs
 

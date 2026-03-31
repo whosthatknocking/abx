@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/whosthatknocking/abx/internal/config"
@@ -20,49 +20,47 @@ import (
 type Adapter struct {
 	cfg    config.SignalCLIConfig
 	logger *log.Logger
-	mu     sync.Mutex
+}
+
+const (
+	reconnectDelay = 2 * time.Second
+	rpcTimeout     = 15 * time.Second
+)
+
+type rpcMessage struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      any            `json:"id,omitempty"`
+	Method  string         `json:"method,omitempty"`
+	Params  map[string]any `json:"params,omitempty"`
+	Result  map[string]any `json:"result,omitempty"`
+	Error   *rpcError      `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data"`
 }
 
 func New(cfg config.SignalCLIConfig, logger *log.Logger) *Adapter {
+	if logger == nil {
+		logger = log.Default()
+	}
 	return &Adapter{cfg: cfg, logger: logger}
 }
 
 func (a *Adapter) Start(ctx context.Context, handler func(types.IncomingEnvelope)) error {
-	conn, err := a.dial(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	a.logger.Printf("signal-cli adapter connected rpc_mode=%s account=%s", a.cfg.RPCMode, a.cfg.Account)
-	_, _ = a.sendRPC(conn, "subscribe", map[string]any{
-		"account": a.cfg.Account,
-	})
-
-	reader := bufio.NewReader(conn)
 	for {
+		err := a.runSession(ctx, handler)
+		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ctx.Err()
+		}
+		a.logger.Printf("signal-cli adapter disconnected err=%v reconnect_in=%s", err, reconnectDelay)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-time.After(reconnectDelay):
 		}
-
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return fmt.Errorf("read signal-cli event: %w", err)
-		}
-		env, ok := decodeEnvelope(a.cfg.Account, line)
-		if !ok {
-			continue
-		}
-		handler(env)
 	}
 }
 
@@ -77,8 +75,55 @@ func (a *Adapter) Send(ctx context.Context, recipient, text string) error {
 	if err != nil {
 		return err
 	}
-	_, err = a.sendRPC(conn, "send", params)
+	reader := bufio.NewReader(conn)
+	_, err = a.sendRPC(ctx, conn, reader, "send", params)
 	return err
+}
+
+func (a *Adapter) runSession(ctx context.Context, handler func(types.IncomingEnvelope)) error {
+	conn, err := a.dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+	a.logger.Printf("signal-cli adapter connected rpc_mode=%s account=%s", a.cfg.RPCMode, a.cfg.Account)
+	if _, err := a.sendRPC(ctx, conn, reader, "subscribe", map[string]any{
+		"account": a.cfg.Account,
+	}); err != nil {
+		return fmt.Errorf("subscribe to signal-cli events: %w", err)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		msg, err := readRPCMessage(conn, reader, 2*time.Second)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
+				return fmt.Errorf("signal-cli connection closed: %w", err)
+			}
+			return fmt.Errorf("read signal-cli event: %w", err)
+		}
+		if msg.Method != "receive" {
+			if msg.Error != nil {
+				a.logger.Printf("signal-cli rpc error code=%d message=%s", msg.Error.Code, msg.Error.Message)
+			}
+			continue
+		}
+		env, ok := decodeEnvelopeFromRPC(a.cfg.Account, msg)
+		if !ok {
+			continue
+		}
+		handler(env)
+	}
 }
 
 func (a *Adapter) dial(ctx context.Context) (net.Conn, error) {
@@ -93,37 +138,27 @@ func (a *Adapter) dial(ctx context.Context) (net.Conn, error) {
 	}
 }
 
-func (a *Adapter) sendRPC(conn net.Conn, method string, params map[string]any) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
+func (a *Adapter) sendRPC(ctx context.Context, conn net.Conn, reader *bufio.Reader, method string, params map[string]any) (map[string]any, error) {
 	id := strconv.FormatInt(time.Now().UnixNano(), 10)
-	payload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
+	payload := rpcMessage{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  method,
+		Params:  params,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	raw = append(raw, '\n')
 	if _, err := conn.Write(raw); err != nil {
-		return "", fmt.Errorf("write signal-cli request: %w", err)
+		return nil, fmt.Errorf("write signal-cli request: %w", err)
 	}
-	return id, nil
+	return awaitRPCResponse(ctx, conn, reader, id)
 }
 
-func decodeEnvelope(account string, raw []byte) (types.IncomingEnvelope, bool) {
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return types.IncomingEnvelope{}, false
-	}
-	event := childMap(payload, "params")
-	if len(event) == 0 {
-		event = payload
-	}
+func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEnvelope, bool) {
+	event := payload.Params
 	envelope := childMap(event, "envelope")
 	if len(envelope) == 0 {
 		return types.IncomingEnvelope{}, false
@@ -153,7 +188,7 @@ func decodeEnvelope(account string, raw []byte) (types.IncomingEnvelope, bool) {
 		ChatType:       chatType,
 		Text:           strings.TrimSpace(messageText),
 		MentionedBot:   mentionedBot(dataMessage, account),
-		CreatedAt:      time.Now(),
+		CreatedAt:      envelopeTimestamp(envelope),
 	}, true
 }
 
@@ -217,7 +252,7 @@ func sendParams(account, target, text string) (map[string]any, error) {
 		if recipient == "" {
 			return nil, fmt.Errorf("signal-cli direct recipient is empty")
 		}
-		params["recipients"] = []string{recipient}
+		params["recipient"] = []string{recipient}
 	case strings.HasPrefix(target, "group:"):
 		groupID := strings.TrimSpace(strings.TrimPrefix(target, "group:"))
 		if groupID == "" {
@@ -228,7 +263,70 @@ func sendParams(account, target, text string) (map[string]any, error) {
 		if strings.TrimSpace(target) == "" {
 			return nil, fmt.Errorf("signal-cli recipient is empty")
 		}
-		params["recipients"] = []string{target}
+		params["recipient"] = []string{target}
 	}
 	return params, nil
+}
+
+func awaitRPCResponse(ctx context.Context, conn net.Conn, reader *bufio.Reader, id string) (map[string]any, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		msg, err := readRPCMessage(conn, reader, rpcTimeout)
+		if err != nil {
+			return nil, err
+		}
+		if msg.Method == "receive" {
+			continue
+		}
+		if normalizeRPCID(msg.ID) != id {
+			continue
+		}
+		if msg.Error != nil {
+			return nil, fmt.Errorf("signal-cli rpc error %d: %s", msg.Error.Code, msg.Error.Message)
+		}
+		return msg.Result, nil
+	}
+}
+
+func readRPCMessage(conn net.Conn, reader *bufio.Reader, timeout time.Duration) (rpcMessage, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		return rpcMessage{}, err
+	}
+	var msg rpcMessage
+	if err := json.Unmarshal(line, &msg); err != nil {
+		return rpcMessage{}, fmt.Errorf("decode signal-cli rpc message: %w", err)
+	}
+	return msg, nil
+}
+
+func normalizeRPCID(v any) string {
+	switch vv := v.(type) {
+	case string:
+		return vv
+	case float64:
+		return strconv.FormatInt(int64(vv), 10)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(vv)
+	}
+}
+
+func envelopeTimestamp(envelope map[string]any) time.Time {
+	ts := stringField(envelope, "timestamp")
+	if ts == "" {
+		return time.Now()
+	}
+	ms, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return time.Now()
+	}
+	return time.UnixMilli(ms)
 }

@@ -32,6 +32,10 @@ func (a *fakeAgent) Chat(_ context.Context, _ []types.Message, _ []types.Tool) (
 	return types.AgentResponse{Text: a.response}, nil
 }
 
+func (a *fakeAgent) Check(_ context.Context) error {
+	return nil
+}
+
 type fakeExecutor struct {
 	output string
 }

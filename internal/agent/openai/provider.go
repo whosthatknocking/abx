@@ -83,6 +83,30 @@ func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types
 	return types.AgentResponse{Text: strings.TrimSpace(decoded.Choices[0].Message.Content)}, nil
 }
 
+func (p *Provider) Check(ctx context.Context) error {
+	if p.cfg.APIKey == "" {
+		return fmt.Errorf("openai api key is not configured")
+	}
+
+	url := strings.TrimRight(p.baseURL(), "/") + "/models/" + p.cfg.Model
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("openai connectivity check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("openai connectivity check failed: %s", resp.Status)
+	}
+	return nil
+}
+
 func (p *Provider) baseURL() string {
 	if p.cfg.BaseURL != "" {
 		return p.cfg.BaseURL

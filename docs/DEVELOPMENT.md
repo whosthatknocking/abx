@@ -47,6 +47,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - LM Studio requires `Require Authentication` to be enabled before `Allow calling servers from mcp.json` can be turned on for API-driven MCP usage
 - SQLite persistence uses the local `sqlite3` CLI
 - Command execution is deny-by-default and policy-validated at startup
+- Longer conversations are compacted by storing a local summary of older turns and prepending that summary back into the agent prompt alongside a recent history window
 - Runtime logs now include higher-level interaction tracing for accepted messages, agent request start/end, command proposal creation, approvals, and command execution outcomes
 
 ## Quality Checks

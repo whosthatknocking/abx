@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseConfigRules(t *testing.T) {
 	input := `
@@ -82,5 +86,67 @@ description = "test"
 	}
 	if cfg.Agent.Primary.Integrations[0] != "mcp/playwright" {
 		t.Fatalf("unexpected integration %q", cfg.Agent.Primary.Integrations[0])
+	}
+}
+
+func TestLoadCreatesDefaultConfigDirectory(t *testing.T) {
+	tmpHome := t.TempDir()
+	originalHome, hadHome := os.LookupEnv("HOME")
+	if err := os.Setenv("HOME", tmpHome); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	defer func() {
+		if hadHome {
+			_ = os.Setenv("HOME", originalHome)
+			return
+		}
+		_ = os.Unsetenv("HOME")
+	}()
+
+	configDir := filepath.Join(tmpHome, ".config", "abx")
+	configPath := filepath.Join(configDir, "config.toml")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected missing config file error")
+	}
+	if _, err := os.Stat(configDir); err != nil {
+		t.Fatalf("expected config dir to be created: %v", err)
+	}
+	input := `
+[agent.primary]
+provider = "openai"
+model = "gpt-4o-mini"
+
+[security]
+trusted_numbers = ["+1"]
+
+[database]
+type = "inmemory"
+dsn = "ignored"
+
+[command]
+work_dir = "~/abx/workspace"
+
+[audit]
+file_path = "~/abx/audit.log"
+
+[[command.policy.rules]]
+id = "allow-pwd"
+enabled = true
+action = "allow"
+match_type = "exact"
+pattern = "pwd"
+description = "test"
+`
+
+	if err := os.WriteFile(configPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load default config: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config")
 	}
 }

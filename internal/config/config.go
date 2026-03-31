@@ -102,6 +102,9 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("resolve home dir: %w", err)
 		}
 		path = filepath.Join(home, ".config", "abx", "config.toml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, fmt.Errorf("create config dir: %w", err)
+		}
 	}
 
 	raw, err := os.ReadFile(path)

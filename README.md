@@ -8,6 +8,7 @@ The project is designed to stay transport-agnostic and provider-agnostic over ti
 
 - Bridges trusted messaging conversations to agent-backed assistance
 - Supports conversational requests and controlled local task execution
+- Compacts longer chats with local conversation summaries plus recent context
 - Uses deny-by-default shell execution with explicit approval
 - Keeps conversation state, configuration, and runtime local
 

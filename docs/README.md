@@ -21,6 +21,7 @@
 - Trusted-sender-only messaging interaction in v1
 - Group-chat activation via transport metadata in v1 (`signal-cli` Signal mention metadata)
 - Conversational agent responses from local context only
+- Automatic conversation summaries for older context in longer chats
 - Built-in control commands: `/version`, `/config`, `/reset`
 - Deny-by-default shell execution with explicit allow rules
 - Request-bound approval tokens for command execution
@@ -95,4 +96,5 @@ rpc_port = 7583
 
 - v1 is file-configured only.
 - Conversational answers come from model context only; live external lookups are disabled in v1.
+- Longer conversations use a local summary of older turns plus a recent message window to keep useful context without sending the full transcript every time.
 - Shell execution is deny-by-default and must match an explicit allow rule.

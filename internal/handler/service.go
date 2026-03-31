@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +49,12 @@ type Service struct {
 	agent     agent.Provider
 	executor  commandExecutor
 }
+
+const (
+	recentHistoryLimit  = 20
+	summaryHistoryLimit = 100
+	summaryMaxChars     = 2000
+)
 
 func NewService(opts Options) *Service {
 	logger := opts.Logger
@@ -143,7 +150,7 @@ func (s *Service) allowed(env types.IncomingEnvelope) bool {
 }
 
 func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
-	history, err := s.repo.GetActiveHistory(ctx, env.ConversationID, 20)
+	history, err := s.repo.GetActiveHistory(ctx, env.ConversationID, summaryHistoryLimit)
 	if err != nil {
 		return err
 	}
@@ -152,17 +159,26 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
+	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
+	if desiredSummary != summary {
+		if err := s.repo.SaveConversationSummary(ctx, env.ConversationID, sessionID, desiredSummary); err != nil {
+			return err
+		}
+		summary = desiredSummary
+	}
+	agentMessages := prependSummaryMessage(recentHistory, summary)
 	s.logger.Printf(
 		"agent interaction start conversation=%s session=%s sender=%s history_messages=%d history_chars=%d summary_chars=%d input_chars=%d",
 		env.ConversationID,
 		sessionID,
 		env.Sender,
-		len(history),
-		totalChars(history),
+		len(agentMessages),
+		totalChars(agentMessages),
 		len(summary),
 		len(strings.TrimSpace(env.Text)),
 	)
-	response, err := s.agent.Chat(ctx, history, nil)
+	response, err := s.agent.Chat(ctx, agentMessages, nil)
 	if err != nil {
 		s.logger.Printf("agent interaction failed conversation=%s session=%s sender=%s err=%v", env.ConversationID, sessionID, env.Sender, err)
 		s.audit(audit.Record{
@@ -471,6 +487,80 @@ func totalChars(messages []types.Message) int {
 		total += len(msg.Text)
 	}
 	return total
+}
+
+func splitHistoryForSummary(messages []types.Message, recentLimit int) ([]types.Message, []types.Message) {
+	if recentLimit <= 0 || len(messages) <= recentLimit {
+		return nil, append([]types.Message(nil), messages...)
+	}
+	cut := len(messages) - recentLimit
+	older := append([]types.Message(nil), messages[:cut]...)
+	recent := append([]types.Message(nil), messages[cut:]...)
+	return older, recent
+}
+
+func prependSummaryMessage(messages []types.Message, summary string) []types.Message {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return append([]types.Message(nil), messages...)
+	}
+	out := make([]types.Message, 0, len(messages)+1)
+	out = append(out, types.Message{
+		Role: types.RoleSystem,
+		Text: "Conversation summary:\n" + summary,
+	})
+	out = append(out, messages...)
+	return out
+}
+
+func summarizeMessages(messages []types.Message, maxChars int) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	sorted := append([]types.Message(nil), messages...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+	})
+
+	var b strings.Builder
+	for _, msg := range sorted {
+		text := strings.TrimSpace(msg.Text)
+		if text == "" {
+			continue
+		}
+		line := roleLabel(msg.Role) + ": " + compactWhitespace(text)
+		if maxChars > 0 && b.Len()+len(line)+1 > maxChars {
+			remaining := maxChars - b.Len()
+			if remaining <= 0 {
+				break
+			}
+			if remaining > 4 {
+				b.WriteString(line[:remaining-3])
+				b.WriteString("...")
+			}
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func roleLabel(role types.Role) string {
+	switch role {
+	case types.RoleAssistant:
+		return "Assistant"
+	case types.RoleSystem:
+		return "System"
+	default:
+		return "User"
+	}
+}
+
+func compactWhitespace(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func (s *Service) formatAgentReply(text string) string {

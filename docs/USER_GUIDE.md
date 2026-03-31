@@ -32,6 +32,7 @@
 
 - Trusted users can ask normal questions such as explanations, summaries, or brainstorming prompts.
 - In v1, responses come only from the configured model plus locally stored conversation context.
+- For longer chats, `abx` automatically keeps a local summary of older conversation turns and combines it with a recent message window when building agent context.
 - Live external lookups such as current weather or news are not available in v1.
 - If you use a local LM Studio-compatible endpoint with enabled `[[mcp.servers]]`, `abx` will route those requests through LM Studio's MCP-aware chat path for supported tasks such as browser access.
 - If `[debug].enabled = true`, normal chat replies also include which configured agent responded.
@@ -60,4 +61,5 @@
 ## Resetting Context
 
 - Send `/reset` to soft-reset the active session
+- A reset also starts a fresh summary/history window for future agent requests in that chat
 - Previous sessions remain available for audit and diagnostics

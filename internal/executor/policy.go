@@ -18,6 +18,12 @@ type policy struct {
 	rules []compiledRule
 }
 
+type evaluation struct {
+	Allowed      bool
+	AllowMatches []string
+	DenyMatches  []string
+}
+
 func newPolicy(mode string, rules []config.CommandPolicyRule) (*policy, error) {
 	seen := map[string]struct{}{}
 	compiled := make([]compiledRule, 0, len(rules))
@@ -63,28 +69,28 @@ func newPolicy(mode string, rules []config.CommandPolicyRule) (*policy, error) {
 	return &policy{mode: mode, rules: compiled}, nil
 }
 
-func (p *policy) Evaluate(command string) (allowed bool, matches []string) {
-	matchedAllow := false
-	matchedDeny := false
+func (p *policy) Evaluate(command string) evaluation {
+	result := evaluation{}
 	for _, rule := range p.rules {
 		if !rule.matches(command) {
 			continue
 		}
-		matches = append(matches, rule.ID)
 		if rule.Action == "deny" {
-			matchedDeny = true
+			result.DenyMatches = append(result.DenyMatches, rule.ID)
 		}
 		if rule.Action == "allow" {
-			matchedAllow = true
+			result.AllowMatches = append(result.AllowMatches, rule.ID)
 		}
 	}
-	if matchedDeny {
-		return false, matches
+	if len(result.DenyMatches) > 0 {
+		return result
 	}
 	if p.mode == "allowlist" {
-		return matchedAllow, matches
+		result.Allowed = len(result.AllowMatches) > 0
+		return result
 	}
-	return matchedAllow || !matchedDeny, matches
+	result.Allowed = len(result.AllowMatches) > 0
+	return result
 }
 
 func (r compiledRule) matches(command string) bool {

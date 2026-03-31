@@ -38,9 +38,15 @@ func New(cfg config.CommandConfig) (*Executor, error) {
 
 func (e *Executor) Execute(ctx context.Context, command string) (string, error) {
 	command = strings.TrimSpace(command)
-	allowed, matches := e.policy.Evaluate(command)
-	if !allowed {
-		return "", fmt.Errorf("command blocked by policy (matched rules: %s)", strings.Join(matches, ", "))
+	eval := e.policy.Evaluate(command)
+	if !eval.Allowed {
+		if len(eval.DenyMatches) > 0 {
+			return "", fmt.Errorf("command blocked by policy: matched deny rule(s): %s", strings.Join(eval.DenyMatches, ", "))
+		}
+		if e.policy.mode == "allowlist" {
+			return "", fmt.Errorf("command blocked by policy: no allow rule matched in allowlist mode")
+		}
+		return "", fmt.Errorf("command blocked by policy")
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()

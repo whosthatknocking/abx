@@ -86,6 +86,10 @@ func (a *Adapter) runSession(ctx context.Context, handler func(types.IncomingEnv
 		return err
 	}
 	defer conn.Close()
+	go func() {
+		<-ctx.Done()
+		_ = conn.Close()
+	}()
 
 	reader := bufio.NewReader(conn)
 	a.logger.Printf("signal-cli adapter connected rpc_mode=%s account=%s", a.cfg.RPCMode, a.cfg.Account)

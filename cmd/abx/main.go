@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -74,8 +75,19 @@ func main() {
 		Executor:  cmdExecutor,
 	})
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		sig := <-sigCh
+		logger.Printf("shutdown signal received signal=%s", sig)
+		cancel()
+		sig = <-sigCh
+		logger.Printf("second shutdown signal received signal=%s forcing exit", sig)
+		os.Exit(1)
+	}()
 
 	logger.Printf("starting abx version=%s provider=%s model=%s database=%s", version, cfg.Agent.Primary.Provider, cfg.Agent.Primary.Model, cfg.Database.Type)
 	checkCtx, checkCancel := context.WithTimeout(ctx, 15*time.Second)
@@ -85,9 +97,10 @@ func main() {
 	} else {
 		logger.Printf("agent connection established provider=%s model=%s", cfg.Agent.Primary.Provider, cfg.Agent.Primary.Model)
 	}
-	if err := svc.Start(ctx); err != nil && err != context.Canceled {
+	if err := svc.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("run service: %v", err)
 	}
+	logger.Printf("shutdown complete")
 }
 
 func buildInfoText() string {

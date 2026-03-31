@@ -13,7 +13,8 @@
 ## Status
 
 - The project currently provides a working local scaffold for config loading, session persistence, approval handling, command policy enforcement, and agent-backed conversational responses.
-- The first messaging implementation is `signal-cli` JSON-RPC, and it still needs a production-grade event loop and send/receive implementation.
+- The first messaging implementation is `signal-cli` JSON-RPC, with reconnect handling, direct/group send routing, JSON-RPC response handling, and compatibility fallback for daemons that do not implement `subscribe`.
+- The Signal transport still needs broader real-world validation against additional `signal-cli` event shapes and deployment environments.
 
 ## Features
 
@@ -91,6 +92,7 @@ rpc_port = 7583
 - `[debug].enabled = true` appends agent identity details to normal chat responses for troubleshooting.
 - Shell commands are blocked unless they match an enabled allow rule.
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.
+- `/version` includes build metadata when it is available in the binary.
 
 ## Notes
 

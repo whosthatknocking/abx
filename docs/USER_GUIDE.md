@@ -43,7 +43,8 @@
 2. Send `/run pwd`
 3. `abx` replies with a command proposal and token such as `YES abc123`
 4. Any trusted participant in that chat may approve with the exact token
-5. If the command is allowed by policy, it executes in the configured workspace
+5. Any other trusted reply cancels the pending proposal for that chat
+6. If the command is allowed by policy, it executes in the configured workspace
 
 ## Example
 
@@ -54,7 +55,7 @@
 
 ## Control Commands
 
-- `/version`: show the running application version
+- `/version`: show the running application version and build metadata when available
 - `/config`: show a safe summary of the configured agent provider/model
 - `/reset`: start a fresh active session for the current chat while preserving historical state
 

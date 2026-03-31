@@ -32,6 +32,7 @@ type commandExecutor interface {
 
 type Options struct {
 	Version   string
+	BuildInfo string
 	Config    *config.Config
 	Logger    *log.Logger
 	Repo      repository.Repository
@@ -43,6 +44,7 @@ type Options struct {
 
 type Service struct {
 	version   string
+	buildInfo string
 	config    *config.Config
 	logger    *log.Logger
 	repo      repository.Repository
@@ -65,6 +67,7 @@ func NewService(opts Options) *Service {
 	}
 	return &Service{
 		version:   opts.Version,
+		buildInfo: strings.TrimSpace(opts.BuildInfo),
 		config:    opts.Config,
 		logger:    logger,
 		repo:      opts.Repo,
@@ -368,7 +371,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 			MessageType:    "control",
 			Decision:       "/version",
 		})
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "abx version "+s.version)
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.versionText())
 	case "/config":
 		fallback := "not configured"
 		if s.config.Agent.Fallback.Provider != "" {
@@ -514,6 +517,14 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func (s *Service) versionText() string {
+	text := "abx version " + strings.TrimSpace(s.version)
+	if s.buildInfo == "" {
+		return text
+	}
+	return text + "\nBuild: " + s.buildInfo
 }
 
 func exitStatus(err error) *int {

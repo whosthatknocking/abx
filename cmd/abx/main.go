@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,8 @@ import (
 )
 
 var version = "dev"
+var buildCommit = ""
+var buildDate = ""
 
 func main() {
 	var configPath string
@@ -61,6 +64,7 @@ func main() {
 	messenger := signalcli.New(cfg.Messaging.SignalCLI, logger)
 	svc := handler.NewService(handler.Options{
 		Version:   version,
+		BuildInfo: buildInfoText(),
 		Config:    cfg,
 		Logger:    logger,
 		Repo:      repo,
@@ -83,6 +87,27 @@ func main() {
 	}
 	if err := svc.Start(ctx); err != nil && err != context.Canceled {
 		log.Fatalf("run service: %v", err)
+	}
+}
+
+func buildInfoText() string {
+	parts := make([]string, 0, 2)
+	if value := cleanBuildValue(buildCommit); value != "" {
+		parts = append(parts, "commit="+value)
+	}
+	if value := cleanBuildValue(buildDate); value != "" {
+		parts = append(parts, "built="+value)
+	}
+	return strings.Join(parts, " ")
+}
+
+func cleanBuildValue(value string) string {
+	value = strings.TrimSpace(value)
+	switch value {
+	case "", "unknown":
+		return ""
+	default:
+		return value
 	}
 }
 

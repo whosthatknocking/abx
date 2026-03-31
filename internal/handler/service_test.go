@@ -90,6 +90,71 @@ func TestConfigCommandIsHandledLocally(t *testing.T) {
 	}
 }
 
+func TestVersionCommandIncludesBuildMetadataWhenAvailable(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version:   "1.2.3",
+		BuildInfo: "commit=abc123 built=2026-03-31T12:00:00Z",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/version",
+	})
+	if err != nil {
+		t.Fatalf("handle /version: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if got := msgs.sent[0]; got != "abx version 1.2.3\nBuild: commit=abc123 built=2026-03-31T12:00:00Z" {
+		t.Fatalf("unexpected /version response: %q", got)
+	}
+}
+
+func TestVersionCommandOmitsBuildMetadataWhenUnavailable(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "dev",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/version",
+	})
+	if err != nil {
+		t.Fatalf("handle /version: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if got := msgs.sent[0]; got != "abx version dev" {
+		t.Fatalf("unexpected /version response: %q", got)
+	}
+}
+
 func TestResetStartsNewSession(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

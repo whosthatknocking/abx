@@ -199,6 +199,72 @@ func TestConfigCommandOmitsFallbackAndUsesNormalizedDefaults(t *testing.T) {
 	}
 }
 
+func TestGroupMentionRunCommandIsHandledLocally(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "group:test",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		MentionedBot:   true,
+		Text:           "@abx /run pwd",
+	})
+	if err != nil {
+		t.Fatalf("handle group /run pwd: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Command:\npwd") {
+		t.Fatalf("unexpected group /run response: %q", msgs.sent[0])
+	}
+}
+
+func TestGroupMentionControlCommandIsHandledLocally(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "group:test",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		MentionedBot:   true,
+		Text:           "@abx /help",
+	})
+	if err != nil {
+		t.Fatalf("handle group /help: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Available message types:") {
+		t.Fatalf("unexpected group /help response: %q", msgs.sent[0])
+	}
+}
+
 func TestVersionCommandIncludesBuildMetadataWhenAvailable(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

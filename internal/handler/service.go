@@ -100,6 +100,7 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		})
 		return nil
 	}
+	env.Text = normalizeIncomingText(env)
 	s.logger.Printf("interaction accepted conversation=%s sender=%s chat_type=%s mentioned=%t text_len=%d", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot, len(strings.TrimSpace(env.Text)))
 
 	sessionID, err := s.repo.GetActiveSessionID(ctx, env.ConversationID)
@@ -884,6 +885,31 @@ func looksLikeExactCommand(input string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeIncomingText(env types.IncomingEnvelope) string {
+	text := strings.TrimSpace(env.Text)
+	if env.ChatType != types.ChatTypeGroup || !env.MentionedBot {
+		return text
+	}
+	return stripLeadingMentions(text)
+}
+
+func stripLeadingMentions(text string) string {
+	text = strings.TrimSpace(text)
+	for strings.HasPrefix(text, "@") {
+		fields := strings.Fields(text)
+		if len(fields) == 0 {
+			return ""
+		}
+		first := strings.TrimSpace(fields[0])
+		if !strings.HasPrefix(first, "@") {
+			break
+		}
+		text = strings.TrimSpace(strings.TrimPrefix(text, first))
+		text = strings.TrimLeft(text, " \t,:;-")
+	}
+	return strings.TrimSpace(text)
 }
 
 func endpointClass(baseURL string) string {

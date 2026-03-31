@@ -262,7 +262,7 @@ func (s *Service) handleShellRequest(ctx context.Context, env types.IncomingEnve
 		Command:        command,
 		Decision:       "pending_approval",
 	})
-	text := fmt.Sprintf("Proposed command:\n%s\n\nReply with: YES %s", command, nonce)
+	text := fmt.Sprintf("Command:\n%s\n\nReply with:\nYES %s", command, nonce)
 	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, text)
 }
 

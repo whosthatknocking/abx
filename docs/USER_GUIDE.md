@@ -41,7 +41,7 @@
 
 1. Send `/run` if you want to see the usage format
 2. Send `/run pwd`
-3. `abx` replies with a command proposal and token such as `YES abc123`
+3. `abx` replies with the command plus a single approval line such as `YES abc123`
 4. Any trusted participant in that chat may approve with the exact token
 5. Any other trusted reply cancels the pending proposal for that chat
 6. If the command is allowed by policy, it executes in the configured workspace
@@ -49,7 +49,7 @@
 ## Example
 
 1. Send `/run pwd`
-2. `abx` replies with a command proposal and token such as `YES abc123`
+2. `abx` replies with the command plus a single approval line such as `YES abc123`
 3. Any trusted participant in that chat may approve with the exact token
 4. If the command is allowed by policy, it executes in the configured workspace
 

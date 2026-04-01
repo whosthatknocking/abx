@@ -21,6 +21,7 @@
 - Messaging-to-agent bridge architecture with Signal as the first transport
 - Trusted-sender-only messaging interaction in v1
 - Group-chat activation via transport metadata in v1 (`signal-cli` Signal mention metadata)
+- Built-in slash commands and `/run` behave the same in direct and group chat once the bot is explicitly mentioned in the group
 - Conversational agent responses from local context only
 - Automatic conversation summaries for older context in longer chats
 - Built-in control commands: `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents format`, `/agents fallback`, `/agents switch`, `/reset`

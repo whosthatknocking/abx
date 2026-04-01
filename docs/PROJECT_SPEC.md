@@ -251,6 +251,8 @@ All project documentation must live under the `docs/` directory. The repository 
   - In a group conversation, the system may consider responding only if both conditions are true:
     1. The sender number is present in `trusted_numbers`.
     2. The message explicitly mentions the bot according to Signal mention metadata exposed by `signal-cli`.
+  - In a group conversation, built-in slash commands and `/run` must remain available under the same semantics as direct chat once that explicit mention gate is satisfied.
+  - Transport-specific mention prefixes or placeholders may be normalized before command routing, but the explicit mention requirement must still be enforced from transport metadata rather than plain text alone.
   - Messages from untrusted numbers must never trigger command proposals, approvals, or normal conversational responses in any chat context.
 
 - **Message Classification**:

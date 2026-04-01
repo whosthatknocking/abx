@@ -12,6 +12,7 @@
 
 - In direct chats, only trusted numbers may interact with `abx`.
 - In group chats, only trusted numbers may interact and the bot must be explicitly mentioned by Signal mention metadata.
+- In group chats, built-in slash commands such as `/help`, `/version`, `/config`, `/agents ...`, `/run ...`, and `/reset` work the same way as in direct chat once the bot is explicitly mentioned.
 
 ## Before Using `abx`
 
@@ -76,6 +77,7 @@
 - `/agents fallback`: show whether fallback is enabled for the current session, disable it with `/agents fallback disable`, or re-enable it with `/agents fallback enable`
 - `/agents switch`: switch the active primary and fallback agent order for the current running process
 - `/reset`: start a fresh active session for the current chat while preserving historical state
+- In group chat, prefix these commands by mentioning the bot in the same message; after mention normalization they follow the same local control flow as in direct chat.
 
 ## Resetting Context
 

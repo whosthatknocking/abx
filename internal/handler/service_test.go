@@ -650,7 +650,7 @@ func TestAgentsStatusCommandChecksConfiguredAgents(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "Agent status:") ||
 		!strings.Contains(msgs.sent[0], "- primary: qwen/qwen3-4b-2507 (openai-compatible): ok") ||
-		!strings.Contains(msgs.sent[0], "- fallback: gpt-5-nano (openai-compatible): error:") {
+		!strings.Contains(msgs.sent[0], "- fallback: gpt-5-nano (openai-compatible): error: server error") {
 		t.Fatalf("unexpected /agents status response: %q", msgs.sent[0])
 	}
 }

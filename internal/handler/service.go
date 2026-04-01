@@ -1059,9 +1059,40 @@ func (s *Service) singleAgentStatusLine(ctx context.Context, label string, provi
 	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := checker.Check(checkCtx); err != nil {
-		return fmt.Sprintf("- %s: %s (%s): error: %v", label, model, contract, err)
+		return fmt.Sprintf("- %s: %s (%s): error: %s", label, model, contract, summarizeAgentStatusError(err))
 	}
 	return fmt.Sprintf("- %s: %s (%s): ok", label, model, contract)
+}
+
+func summarizeAgentStatusError(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	text := strings.TrimSpace(err.Error())
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "connection refused"):
+		return "unreachable (connection refused)"
+	case strings.Contains(lower, "deadline exceeded"), strings.Contains(lower, "timeout"):
+		return "timeout"
+	case strings.Contains(lower, "no such host"):
+		return "unreachable (host not found)"
+	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "401"):
+		return "authentication failed"
+	case strings.Contains(lower, "forbidden"), strings.Contains(lower, "403"):
+		return "access denied"
+	case strings.Contains(lower, "404"):
+		return "endpoint not found"
+	case strings.Contains(lower, "500"), strings.Contains(lower, "501"), strings.Contains(lower, "502"), strings.Contains(lower, "503"), strings.Contains(lower, "504"):
+		return "server error"
+	}
+	if idx := strings.LastIndex(text, ":"); idx >= 0 {
+		tail := strings.TrimSpace(text[idx+1:])
+		if tail != "" && len(tail) < len(text) {
+			text = tail
+		}
+	}
+	return text
 }
 
 func providerForStatus(cfg config.ProviderConfig) (agent.Provider, bool) {

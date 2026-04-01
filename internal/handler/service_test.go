@@ -591,6 +591,42 @@ func TestDebugModeIncludesAgentLabelInConversationResponse(t *testing.T) {
 	}
 }
 
+func TestConversationPathPrependsSystemGuidance(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "hello"}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "Test",
+	})
+	if err != nil {
+		t.Fatalf("handle conversation: %v", err)
+	}
+	if len(agentSpy.lastMessages) == 0 {
+		t.Fatal("expected conversation messages to be sent to agent")
+	}
+	if agentSpy.lastMessages[0].Role != types.RoleSystem {
+		t.Fatalf("expected first conversation message to be system, got %#v", agentSpy.lastMessages[0])
+	}
+	if !strings.Contains(agentSpy.lastMessages[0].Text, "Do not invent approval tokens") {
+		t.Fatalf("expected conversation guardrail in system prompt, got %q", agentSpy.lastMessages[0].Text)
+	}
+}
+
 func TestDebugLabelIsNotStoredBackIntoHistory(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}
@@ -1217,15 +1253,21 @@ func TestConversationSummaryIsStoredAndPrependedForLongHistory(t *testing.T) {
 		t.Fatal("expected agent to receive messages")
 	}
 	if agentSpy.lastMessages[0].Role != types.RoleSystem {
-		t.Fatalf("expected first agent message to be system summary, got %s", agentSpy.lastMessages[0].Role)
+		t.Fatalf("expected first agent message to be system guidance, got %s", agentSpy.lastMessages[0].Role)
 	}
-	if !strings.Contains(agentSpy.lastMessages[0].Text, "Conversation summary:") {
-		t.Fatalf("expected conversation summary prefix, got %q", agentSpy.lastMessages[0].Text)
+	if !strings.Contains(agentSpy.lastMessages[0].Text, "Do not invent approval tokens") {
+		t.Fatalf("expected conversation guidance prompt, got %q", agentSpy.lastMessages[0].Text)
 	}
-	if !strings.Contains(agentSpy.lastMessages[0].Text, "message x") {
-		t.Fatalf("expected older history to be summarized, got %q", agentSpy.lastMessages[0].Text)
+	if len(agentSpy.lastMessages) < 2 || agentSpy.lastMessages[1].Role != types.RoleSystem {
+		t.Fatalf("expected second agent message to be system summary, got %#v", agentSpy.lastMessages)
 	}
-	if got := len(agentSpy.lastMessages); got != recentHistoryLimit+1 {
-		t.Fatalf("expected summary plus %d recent messages, got %d", recentHistoryLimit, got)
+	if !strings.Contains(agentSpy.lastMessages[1].Text, "Conversation summary:") {
+		t.Fatalf("expected conversation summary prefix, got %q", agentSpy.lastMessages[1].Text)
+	}
+	if !strings.Contains(agentSpy.lastMessages[1].Text, "message x") {
+		t.Fatalf("expected older history to be summarized, got %q", agentSpy.lastMessages[1].Text)
+	}
+	if got := len(agentSpy.lastMessages); got != recentHistoryLimit+2 {
+		t.Fatalf("expected guidance plus summary plus %d recent messages, got %d", recentHistoryLimit, got)
 	}
 }

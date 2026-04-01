@@ -204,7 +204,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		}
 		summary = desiredSummary
 	}
-	agentMessages := prependSummaryMessage(recentHistory, summary)
+	agentMessages := prependConversationSystemPrompt(prependSummaryMessage(recentHistory, summary))
 	s.logger.Printf(
 		"agent interaction start conversation=%s session=%s sender=%s history_messages=%d history_chars=%d summary_chars=%d input_chars=%d",
 		env.ConversationID,
@@ -708,6 +708,16 @@ func prependSummaryMessage(messages []types.Message, summary string) []types.Mes
 	out = append(out, types.Message{
 		Role: types.RoleSystem,
 		Text: "Conversation summary:\n" + summary,
+	})
+	out = append(out, messages...)
+	return out
+}
+
+func prependConversationSystemPrompt(messages []types.Message) []types.Message {
+	out := make([]types.Message, 0, len(messages)+1)
+	out = append(out, types.Message{
+		Role: types.RoleSystem,
+		Text: "Reply to the latest user message directly and briefly when appropriate. Use the conversation context, but do not assume the user wants to execute commands, browse, fetch live data, use MCP tools, or start an approval flow unless they explicitly ask to run something or use `/run`. Do not invent approval tokens or command-execution instructions in normal conversation replies.",
 	})
 	out = append(out, messages...)
 	return out

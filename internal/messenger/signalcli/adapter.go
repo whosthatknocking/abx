@@ -23,8 +23,9 @@ type Adapter struct {
 }
 
 const (
-	reconnectDelay = 2 * time.Second
-	rpcTimeout     = 15 * time.Second
+	reconnectDelay  = 2 * time.Second
+	rpcTimeout      = 15 * time.Second
+	maxMessageRunes = 3000
 )
 
 type rpcMessage struct {
@@ -71,13 +72,21 @@ func (a *Adapter) Send(ctx context.Context, recipient, text string) error {
 	}
 	defer conn.Close()
 
-	params, err := sendParams(a.cfg.Account, recipient, text)
-	if err != nil {
-		return err
-	}
 	reader := bufio.NewReader(conn)
-	_, err = a.sendRPC(ctx, conn, reader, "send", params)
-	return err
+	chunks := splitOutgoingMessage(text, maxMessageRunes)
+	for i, chunk := range chunks {
+		params, err := sendParams(a.cfg.Account, recipient, chunk)
+		if err != nil {
+			return err
+		}
+		if _, err := a.sendRPC(ctx, conn, reader, "send", params); err != nil {
+			return err
+		}
+		if len(chunks) > 1 {
+			a.logger.Printf("signal-cli adapter sent chunk %d/%d recipient=%s chars=%d", i+1, len(chunks), recipient, len([]rune(chunk)))
+		}
+	}
+	return nil
 }
 
 func (a *Adapter) runSession(ctx context.Context, handler func(types.IncomingEnvelope)) error {
@@ -403,4 +412,65 @@ func isMethodNotImplementedError(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "method not implemented")
+}
+
+func splitOutgoingMessage(text string, maxRunes int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return []string{""}
+	}
+	if maxRunes <= 0 || len([]rune(text)) <= maxRunes {
+		return []string{text}
+	}
+
+	var chunks []string
+	remaining := text
+	for len([]rune(remaining)) > maxRunes {
+		head, tail := splitChunk(remaining, maxRunes)
+		chunks = append(chunks, head)
+		remaining = strings.TrimSpace(tail)
+	}
+	if remaining != "" {
+		chunks = append(chunks, remaining)
+	}
+	return chunks
+}
+
+func splitChunk(text string, maxRunes int) (string, string) {
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return strings.TrimSpace(text), ""
+	}
+
+	cut := maxRunes
+	for _, marker := range []string{"\n\n", "\n", " "} {
+		if idx := lastIndexWithinRunes(text, marker, maxRunes); idx > 0 {
+			cut = idx
+			break
+		}
+	}
+	head := strings.TrimSpace(string(runes[:cut]))
+	tail := strings.TrimSpace(string(runes[cut:]))
+	if head == "" {
+		head = strings.TrimSpace(string(runes[:maxRunes]))
+		tail = strings.TrimSpace(string(runes[maxRunes:]))
+	}
+	return head, tail
+}
+
+func lastIndexWithinRunes(text, marker string, maxRunes int) int {
+	runes := []rune(text)
+	if len(runes) == 0 || maxRunes <= 0 {
+		return -1
+	}
+	limit := maxRunes
+	if limit > len(runes) {
+		limit = len(runes)
+	}
+	prefix := string(runes[:limit])
+	byteIdx := strings.LastIndex(prefix, marker)
+	if byteIdx < 0 {
+		return -1
+	}
+	return len([]rune(prefix[:byteIdx]))
 }

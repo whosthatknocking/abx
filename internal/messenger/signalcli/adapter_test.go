@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -228,6 +229,52 @@ func TestDecodeEnvelopeFromRPCGroupApprovalNormalizesMentionPrefix(t *testing.T)
 	}
 	if got.NormalizedText != "YES 1299b2" {
 		t.Fatalf("unexpected normalized group approval text: %q", got.NormalizedText)
+	}
+}
+
+func TestSplitOutgoingMessageLeavesShortMessageUntouched(t *testing.T) {
+	got := splitOutgoingMessage("hello", 10)
+	if len(got) != 1 || got[0] != "hello" {
+		t.Fatalf("unexpected chunks: %#v", got)
+	}
+}
+
+func TestSplitOutgoingMessageSplitsLongMessageAtParagraphBoundaries(t *testing.T) {
+	text := strings.Join([]string{
+		"First paragraph with enough text to fill the first chunk.",
+		"",
+		"Second paragraph with enough text to force another chunk.",
+		"",
+		"Third paragraph.",
+	}, "\n")
+
+	got := splitOutgoingMessage(text, 70)
+	if len(got) < 2 {
+		t.Fatalf("expected multiple chunks, got %#v", got)
+	}
+	for _, chunk := range got {
+		if n := len([]rune(chunk)); n > 70 {
+			t.Fatalf("chunk exceeded limit: %d > 70 (%q)", n, chunk)
+		}
+		if strings.TrimSpace(chunk) == "" {
+			t.Fatalf("unexpected empty chunk in %#v", got)
+		}
+	}
+}
+
+func TestSplitOutgoingMessageSplitsLongUnbrokenText(t *testing.T) {
+	text := strings.Repeat("a", 95)
+	got := splitOutgoingMessage(text, 30)
+	if len(got) != 4 {
+		t.Fatalf("expected 4 chunks, got %#v", got)
+	}
+	for _, chunk := range got {
+		if n := len([]rune(chunk)); n > 30 {
+			t.Fatalf("chunk exceeded limit: %d > 30", n)
+		}
+	}
+	if strings.Join(got, "") != text {
+		t.Fatalf("expected chunks to preserve content")
 	}
 }
 

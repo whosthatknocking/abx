@@ -28,6 +28,7 @@ type sessionState struct {
 	Messages []types.Message
 	Summary  string
 	Persona  string
+	Format   string
 }
 
 func New() repository.Repository {
@@ -134,6 +135,37 @@ func (r *Repository) GetActiveSessionPersona(ctx context.Context, conversationID
 		return "", err
 	}
 	return r.GetSessionPersona(ctx, conversationID, sessionID)
+}
+
+func (r *Repository) SaveSessionFormat(_ context.Context, conversationID, sessionID, format string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	conv := r.ensureConversation(conversationID)
+	session := r.ensureSession(conv, sessionID)
+	session.Format = format
+	return nil
+}
+
+func (r *Repository) GetSessionFormat(_ context.Context, conversationID, sessionID string) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	conv, ok := r.conversations[conversationID]
+	if !ok {
+		return "", nil
+	}
+	session, ok := conv.Sessions[sessionID]
+	if !ok {
+		return "", nil
+	}
+	return session.Format, nil
+}
+
+func (r *Repository) GetActiveSessionFormat(ctx context.Context, conversationID string) (string, error) {
+	sessionID, err := r.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		return "", err
+	}
+	return r.GetSessionFormat(ctx, conversationID, sessionID)
 }
 
 func (r *Repository) RotateConversationSession(_ context.Context, conversationID string) (string, error) {

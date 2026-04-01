@@ -64,7 +64,10 @@ const (
 	summaryMaxChars     = 2000
 	commandContextChars = 1200
 	personaMaxChars     = 500
+	formatMaxChars      = 300
 )
+
+const defaultSessionFormat = "Respond in plain text format."
 
 func NewService(opts Options) *Service {
 	logger := opts.Logger
@@ -194,7 +197,7 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 		if len(fields) == 1 {
 			return true
 		}
-		return fields[1] == "list" || fields[1] == "status" || (fields[1] == "persona" && len(fields) == 2)
+		return fields[1] == "list" || fields[1] == "status" || ((fields[1] == "persona" || fields[1] == "format") && len(fields) == 2)
 	default:
 		return false
 	}
@@ -285,6 +288,10 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	format, err := s.repo.GetActiveSessionFormat(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
 	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
 	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
 	if desiredSummary != summary {
@@ -293,7 +300,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		}
 		summary = desiredSummary
 	}
-	agentMessages := prependConversationSystemPrompt(prependPersonaMessage(prependSummaryMessage(recentHistory, summary), persona))
+	agentMessages := prependConversationSystemPrompt(prependFormatMessage(prependPersonaMessage(prependSummaryMessage(recentHistory, summary), persona), effectiveSessionFormat(format)))
 	s.logger.Printf(
 		"agent interaction start conversation=%s session=%s sender=%s history_messages=%d history_chars=%d summary_chars=%d input_chars=%d",
 		env.ConversationID,
@@ -555,7 +562,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	switch fields[0] {
 	case "/agents":
 		if len(fields) < 2 {
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona>")
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona|format>")
 		}
 		switch fields[1] {
 		case "list":
@@ -603,6 +610,44 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				Decision:       "/agents persona set",
 			})
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona updated for this session.")
+		case "format":
+			if len(fields) == 2 {
+				format, err := s.repo.GetSessionFormat(ctx, env.ConversationID, sessionID)
+				if err != nil {
+					return err
+				}
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current format:\n"+effectiveSessionFormat(format))
+			}
+			if fields[2] == "reset" {
+				if err := s.repo.SaveSessionFormat(ctx, env.ConversationID, sessionID, ""); err != nil {
+					return err
+				}
+				s.audit(audit.Record{
+					Event:          "control_command",
+					ConversationID: env.ConversationID,
+					SessionID:      sessionID,
+					Sender:         env.Sender,
+					MessageType:    "control",
+					Decision:       "/agents format reset",
+				})
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Format reset for this session.")
+			}
+			format := normalizeFormat(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(effectiveIncomingText(env)), "/agents format")))
+			if format == "" {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents format <instruction>\nUse `/agents format reset` to return to plain text.")
+			}
+			if err := s.repo.SaveSessionFormat(ctx, env.ConversationID, sessionID, format); err != nil {
+				return err
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents format set",
+			})
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Format updated for this session.")
 		case "switch":
 			if !fallbackConfigured(s.config) {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
@@ -739,6 +784,23 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 				return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
 			}
 			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
+		case "format":
+			if len(fields) > 2 {
+				return false, nil
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents format",
+			})
+			format, err := s.repo.GetSessionFormat(ctx, env.ConversationID, sessionID)
+			if err != nil {
+				return true, err
+			}
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current format:\n"+effectiveSessionFormat(format))
 		}
 		return false, nil
 	default:
@@ -879,6 +941,7 @@ func helpText() string {
 		"- /agents list",
 		"- /agents status",
 		"- /agents persona",
+		"- /agents format",
 		"- /agents switch",
 		"- /reset",
 		"- /run",
@@ -1021,6 +1084,20 @@ func prependPersonaMessage(messages []types.Message, persona string) []types.Mes
 	return out
 }
 
+func prependFormatMessage(messages []types.Message, format string) []types.Message {
+	format = strings.TrimSpace(format)
+	if format == "" {
+		return append([]types.Message(nil), messages...)
+	}
+	out := make([]types.Message, 0, len(messages)+1)
+	out = append(out, types.Message{
+		Role: types.RoleSystem,
+		Text: "Format:\n" + format,
+	})
+	out = append(out, messages...)
+	return out
+}
+
 func prependConversationSystemPrompt(messages []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(messages)+1)
 	out = append(out, types.Message{
@@ -1087,6 +1164,22 @@ func normalizePersona(text string) string {
 		text = strings.TrimSpace(text[:personaMaxChars])
 	}
 	return text
+}
+
+func normalizeFormat(text string) string {
+	text = compactWhitespace(text)
+	if len(text) > formatMaxChars {
+		text = strings.TrimSpace(text[:formatMaxChars])
+	}
+	return text
+}
+
+func effectiveSessionFormat(format string) string {
+	format = strings.TrimSpace(format)
+	if format == "" {
+		return defaultSessionFormat
+	}
+	return format
 }
 
 func (s *Service) formatAgentReply(response types.AgentResponse) string {

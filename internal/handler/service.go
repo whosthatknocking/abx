@@ -372,12 +372,12 @@ func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelo
 }
 
 func (s *Service) handleRecommendedRun(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
-	messages, err := s.runRecommendationMessages(ctx, env.ConversationID)
+	messages, err := s.runRecommendationMessages(ctx, env.ConversationID, sessionID)
 	if err != nil {
 		return err
 	}
 	s.logger.Printf("run recommendation requested conversation=%s session=%s sender=%s input=%q", env.ConversationID, sessionID, env.Sender, input)
-	fallbackDisabled, err := s.repo.GetActiveSessionFallbackDisabled(ctx, env.ConversationID)
+	fallbackDisabled, err := s.repo.GetSessionFallbackDisabled(ctx, env.ConversationID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -1347,23 +1347,19 @@ func normalizeHistoryForAgent(messages []types.Message) []types.Message {
 	return out
 }
 
-func (s *Service) runRecommendationMessages(ctx context.Context, conversationID string) ([]types.Message, error) {
-	history, err := s.repo.GetActiveHistory(ctx, conversationID, summaryHistoryLimit)
+func (s *Service) runRecommendationMessages(ctx context.Context, conversationID, sessionID string) ([]types.Message, error) {
+	history, err := s.repo.GetHistory(ctx, conversationID, sessionID, summaryHistoryLimit)
 	if err != nil {
 		return nil, err
 	}
 	history = normalizeHistoryForAgent(history)
-	summary, err := s.repo.GetActiveConversationSummary(ctx, conversationID)
+	summary, err := s.repo.GetConversationSummary(ctx, conversationID, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
 	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
 	if desiredSummary != summary {
-		sessionID, err := s.repo.GetActiveSessionID(ctx, conversationID)
-		if err != nil {
-			return nil, err
-		}
 		if err := s.repo.SaveConversationSummary(ctx, conversationID, sessionID, desiredSummary); err != nil {
 			return nil, err
 		}

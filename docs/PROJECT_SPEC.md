@@ -313,6 +313,7 @@ All project documentation must live under the `docs/` directory. The repository 
   - `/agents persona` with no argument returns the currently active session persona, if any.
   - `/agents persona <instruction>` stores or replaces the active session persona for that chat session.
   - `/agents persona reset` clears the active session persona.
+  - When no custom persona is active for a session, future conversational agent requests should include an explicit neutral instruction to respond normally and not continue any previously used persona implicitly from older turns.
   - `/agents format` manages a session-scoped response-format instruction that is stored locally and prepended to future agent requests for the active session.
   - `/agents format` with no argument returns the currently active session format instruction.
   - `/agents format <instruction>` stores or replaces the active session format instruction for that chat session.
@@ -330,6 +331,7 @@ All project documentation must live under the `docs/` directory. The repository 
   - `/reset` must also clear any active session persona, restore the session format to its default plain-text instruction, and restore session fallback behavior to enabled by virtue of creating a new active session with fresh session-scoped state.
   - After `/reset`, the next trusted message in that chat must be handled as the start of a new active conversation session.
   - `/reset` should return a confirmation message such as `Conversation context reset for this chat.`
+  - All session-scoped prompt assembly, including normal conversational requests and agent-assisted `/run` command recommendations, must use the same resolved session ID that the inbound message was stored under rather than reloading prompt state from a different active-session pointer later in the request.
   - `/config` must never expose secrets such as API keys, tokens, or full sensitive file paths.
   - `/config` may expose only the following fields in v1:
     1. Messaging provider name

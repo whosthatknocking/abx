@@ -218,9 +218,7 @@ func (r *Repository) SavePendingApproval(_ context.Context, conversationID, sess
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	conv := r.ensureConversation(conversationID)
-	if conv.ActiveSessionID != sessionID {
-		conv.ActiveSessionID = sessionID
-	}
+	r.ensureSession(conv, sessionID)
 	conv.PendingByRequestID[approval.RequestID] = approval
 	conv.ActivePendingRequestID = approval.RequestID
 	return nil

@@ -2156,6 +2156,66 @@ func TestRunIntentUsesAgentRecommendedCommand(t *testing.T) {
 	}
 }
 
+func TestRunRecommendationMessagesUseProvidedSession(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	firstSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get first active session id: %v", err)
+	}
+	if err := repo.SaveMessage(ctx, conversationID, firstSessionID, types.Message{
+		ID:             mustID(),
+		ConversationID: conversationID,
+		SessionID:      firstSessionID,
+		Sender:         "+1555",
+		Role:           types.RoleUser,
+		Kind:           types.MessageKindInbound,
+		ChatType:       types.ChatTypeDirect,
+		Text:           "first session question",
+		CreatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("save first-session message: %v", err)
+	}
+	if _, err := repo.RotateConversationSession(ctx, conversationID); err != nil {
+		t.Fatalf("rotate conversation session: %v", err)
+	}
+
+	messages, err := svc.runRecommendationMessages(ctx, conversationID, firstSessionID)
+	if err != nil {
+		t.Fatalf("build run recommendation messages: %v", err)
+	}
+	if len(messages) < 2 {
+		t.Fatalf("expected instruction plus history for provided session, got %#v", messages)
+	}
+	if messages[0].Role != types.RoleSystem || !strings.Contains(messages[0].Text, "Return exactly this format:") {
+		t.Fatalf("expected run recommendation instruction first, got %#v", messages[0])
+	}
+	foundHistory := false
+	for _, msg := range messages[1:] {
+		if msg.Role == types.RoleUser && strings.Contains(msg.Text, "first session question") {
+			foundHistory = true
+			break
+		}
+	}
+	if !foundHistory {
+		t.Fatalf("expected provided-session history in run recommendation prompt, got %#v", messages)
+	}
+}
+
 func TestRunIntentBlockedRecommendationReturnsExplanation(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

@@ -191,7 +191,7 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 		return false
 	}
 	switch fields[0] {
-	case "/help", "/version", "/config":
+	case "/help", "/version", "/config", "/reset":
 		return true
 	case "/agents":
 		if len(fields) == 1 {
@@ -238,7 +238,7 @@ func (s *Service) handleImmediateLocalControl(ctx context.Context, env types.Inc
 	if err := s.cancelPendingApprovalOnNonApproval(ctx, env, sessionID); err != nil {
 		return err
 	}
-	return s.handleReadOnlyControl(ctx, env, sessionID)
+	return s.handleControl(ctx, env)
 }
 
 func (s *Service) cancelPendingApprovalOnNonApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
@@ -357,6 +357,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 }
 
 func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
+	input = strings.TrimSpace(input)
 	// Treat obviously command-shaped input as a direct command path so policy
 	// errors are reported immediately instead of being reframed as agent intent.
 	if looksLikeExactCommand(input) {

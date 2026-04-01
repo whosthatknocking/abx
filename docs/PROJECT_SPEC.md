@@ -271,6 +271,7 @@ All project documentation must live under the `docs/` directory. The repository 
     1. direct exact commands such as `/run pwd`
     2. plain-English intent requests such as `/run show the current user`
   - For a plain-English `/run` intent, the agent may recommend exactly one shell command plus a short rationale.
+  - Slash-prefixed commands must be routed by the application locally first; `/run` may then invoke the agent only as part of its local recommendation workflow.
   - Only requests that would result in local shell command execution must enter the approval flow.
   - If the system cannot confidently determine whether a request requires shell execution, it should prefer the safer path and require approval before executing any command.
 
@@ -357,10 +358,9 @@ All project documentation must live under the `docs/` directory. The repository 
     2. In group chats, only trusted senders may invoke them, and only when the bot is explicitly mentioned according to Signal mention metadata.
 
 - **Approval Flow**:
-  - `/run` receives either an exact command or a plain-English command intent.
+  - `/run` receives an exact command.
   - If the `/run` payload is already an executable command under the current policy, the bot should propose that exact command directly.
-  - If the `/run` payload is a plain-English intent, the agent may recommend one candidate command and a short rationale.
-  - The recommended command must still pass the current command policy before the bot offers it for approval.
+  - If the `/run` payload is not an exact command, the bot should reject it locally with usage guidance rather than invoking the conversational agent.
   - The bot then sends the confirmation request for the exact command that would be executed.
   - Approval must be bound to a specific pending command ID and short-lived nonce.
   - Any trusted sender who is permitted to interact with the system may approve a pending command by replying with the exact approval token for that request (for example `YES 482731`), not a bare `YES`.

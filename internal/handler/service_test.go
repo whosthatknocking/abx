@@ -353,6 +353,104 @@ func TestReadOnlyControlBypassesBlockedAgentInSameConversation(t *testing.T) {
 	}
 }
 
+func TestResetBypassesBlockedAgentInSameConversation(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "first",
+		secondText:    "/reset",
+	}
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	firstSession, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get initial session: %v", err)
+	}
+
+	doneFirst := make(chan error, 1)
+	go func() {
+		doneFirst <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: conversationID,
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "first",
+		})
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first message to start")
+	}
+
+	doneReset := make(chan error, 1)
+	go func() {
+		doneReset <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: conversationID,
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "/reset",
+		})
+	}()
+
+	select {
+	case err := <-doneReset:
+		if err != nil {
+			t.Fatalf("/reset returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected /reset to complete while agent request is still blocked")
+	}
+
+	select {
+	case <-agentSpy.secondStarted:
+		t.Fatal("did not expect /reset to call the agent")
+	default:
+	}
+
+	secondSession, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get rotated session: %v", err)
+	}
+	if firstSession == secondSession {
+		t.Fatalf("expected /reset to rotate the active session immediately, got same session id %q", firstSession)
+	}
+
+	msgs.mu.Lock()
+	got := append([]string(nil), msgs.sent...)
+	msgs.mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("expected one immediate reset response, got %d", len(got))
+	}
+	if got[0] != "Conversation context reset for this chat." {
+		t.Fatalf("unexpected /reset response: %q", got[0])
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-doneFirst:
+		if err != nil {
+			t.Fatalf("first handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected blocked conversation to finish after release")
+	}
+}
+
 func TestConfigCommandIsHandledLocally(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

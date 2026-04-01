@@ -250,7 +250,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		}
 		return s.proposeCommand(ctx, env, sessionID, command, reason)
 	}
-	return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, strings.TrimSpace(response.Text), s.formatAgentReply(response.Text))
+	return s.sendAssistantDisplay(ctx, env.ConversationID, sessionID, env.ChatType, strings.TrimSpace(response.Text), s.formatAgentReply(response))
 }
 
 func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelope, sessionID, input string) error {
@@ -773,11 +773,24 @@ func compactWhitespace(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-func (s *Service) formatAgentReply(text string) string {
+func (s *Service) formatAgentReply(response types.AgentResponse) string {
+	text := response.Text
 	if s.config == nil || !s.config.Debug.Enabled {
 		return text
 	}
-	label := fmt.Sprintf("[agent: %s / %s (%s)]", s.config.Agent.Primary.Provider, s.config.Agent.Primary.Model, endpointClass(s.config.Agent.Primary.BaseURL))
+	provider := strings.TrimSpace(response.Provider)
+	if provider == "" {
+		provider = strings.TrimSpace(s.config.Agent.Primary.Provider)
+	}
+	model := strings.TrimSpace(response.Model)
+	if model == "" {
+		model = strings.TrimSpace(s.config.Agent.Primary.Model)
+	}
+	class := strings.TrimSpace(response.EndpointClass)
+	if class == "" {
+		class = endpointClass(s.config.Agent.Primary.BaseURL)
+	}
+	label := fmt.Sprintf("[agent: %s / %s (%s)]", provider, model, class)
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return label

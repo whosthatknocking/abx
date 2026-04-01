@@ -43,7 +43,10 @@ type Tool struct {
 }
 
 type AgentResponse struct {
-	Text string
+	Text          string
+	Provider      string
+	Model         string
+	EndpointClass string
 }
 
 type PendingApproval struct {

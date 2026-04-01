@@ -86,7 +86,12 @@ func (p *Provider) decodeOpenAIChatResponse(body io.Reader) (types.AgentResponse
 	if len(decoded.Choices) == 0 {
 		return types.AgentResponse{}, fmt.Errorf("openai response did not contain any choices")
 	}
-	return types.AgentResponse{Text: strings.TrimSpace(decoded.Choices[0].Message.Content)}, nil
+	return types.AgentResponse{
+		Text:          strings.TrimSpace(decoded.Choices[0].Message.Content),
+		Provider:      strings.TrimSpace(p.cfg.Provider),
+		Model:         strings.TrimSpace(p.cfg.Model),
+		EndpointClass: endpointClass(p.cfg.BaseURL),
+	}, nil
 }
 
 func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentResponse, error) {
@@ -115,7 +120,12 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 		}
 	}
 	if len(parts) > 0 {
-		return types.AgentResponse{Text: strings.Join(parts, "\n\n")}, nil
+		return types.AgentResponse{
+			Text:          strings.Join(parts, "\n\n"),
+			Provider:      strings.TrimSpace(p.cfg.Provider),
+			Model:         strings.TrimSpace(p.cfg.Model),
+			EndpointClass: endpointClass(p.cfg.BaseURL),
+		}, nil
 	}
 	for _, item := range decoded.Output {
 		if item.Type == "invalid_tool_call" {
@@ -331,4 +341,19 @@ func firstIntegrationName(integrations []string) string {
 		}
 	}
 	return ""
+}
+
+func endpointClass(baseURL string) string {
+	baseURL = strings.TrimSpace(strings.ToLower(baseURL))
+	if baseURL == "" {
+		return "remote"
+	}
+	switch {
+	case strings.Contains(baseURL, "127.0.0.1"),
+		strings.Contains(baseURL, "localhost"),
+		strings.Contains(baseURL, "0.0.0.0"):
+		return "local"
+	default:
+		return "remote"
+	}
 }

@@ -29,14 +29,22 @@ func (m *fakeMessenger) Send(_ context.Context, _ string, text string) error {
 }
 
 type fakeAgent struct {
-	response     string
-	err          error
-	lastMessages []types.Message
+	response      string
+	err           error
+	provider      string
+	model         string
+	endpointClass string
+	lastMessages  []types.Message
 }
 
 func (a *fakeAgent) Chat(_ context.Context, messages []types.Message, _ []types.Tool) (types.AgentResponse, error) {
 	a.lastMessages = append([]types.Message(nil), messages...)
-	return types.AgentResponse{Text: a.response}, a.err
+	return types.AgentResponse{
+		Text:          a.response,
+		Provider:      a.provider,
+		Model:         a.model,
+		EndpointClass: a.endpointClass,
+	}, a.err
 }
 
 func (a *fakeAgent) Check(_ context.Context) error {
@@ -570,8 +578,10 @@ func TestDebugModeIncludesAgentLabelInConversationResponse(t *testing.T) {
 		Repo:      repo,
 		Auditor:   nil,
 		Messenger: msgs,
-		Agent:     &fakeAgent{response: "Hello from the model."},
-		Executor:  &fakeExecutor{},
+		Agent: &fakeAgent{
+			response: "Hello from the model.",
+		},
+		Executor: &fakeExecutor{},
 	})
 
 	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
@@ -675,6 +685,49 @@ func TestDebugLabelIsNotStoredBackIntoHistory(t *testing.T) {
 	last := history[len(history)-1]
 	if strings.Contains(last.Text, "[agent:") {
 		t.Fatalf("expected stored assistant history without debug label, got %q", last.Text)
+	}
+}
+
+func TestDebugModeUsesFallbackResponderMetadata(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Debug: config.DebugConfig{Enabled: true},
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-4b-2507",
+					BaseURL:  "http://127.0.0.1:1234/v1",
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent: agent.NewFallback(
+			&fakeAgent{err: context.DeadlineExceeded},
+			&fakeAgent{response: "fallback reply", provider: "openai", model: "gpt-5-nano", endpointClass: "remote"},
+		),
+		Executor: &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	})
+	if err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "[agent: openai / gpt-5-nano (remote)]") {
+		t.Fatalf("expected fallback responder label in response, got %q", msgs.sent[0])
 	}
 }
 

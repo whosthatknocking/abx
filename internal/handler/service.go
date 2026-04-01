@@ -194,9 +194,7 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 		if len(fields) == 1 {
 			return true
 		}
-		return fields[1] == "list" || fields[1] == "status"
-	case "/persona":
-		return len(fields) <= 1
+		return fields[1] == "list" || fields[1] == "status" || (fields[1] == "persona" && len(fields) == 2)
 	default:
 		return false
 	}
@@ -557,13 +555,54 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	switch fields[0] {
 	case "/agents":
 		if len(fields) < 2 {
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch>")
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona>")
 		}
 		switch fields[1] {
 		case "list":
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsListText())
 		case "status":
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx))
+		case "persona":
+			if len(fields) == 2 {
+				persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
+				if err != nil {
+					return err
+				}
+				if strings.TrimSpace(persona) == "" {
+					return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
+				}
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
+			}
+			if fields[2] == "reset" {
+				if err := s.repo.SaveSessionPersona(ctx, env.ConversationID, sessionID, ""); err != nil {
+					return err
+				}
+				s.audit(audit.Record{
+					Event:          "control_command",
+					ConversationID: env.ConversationID,
+					SessionID:      sessionID,
+					Sender:         env.Sender,
+					MessageType:    "control",
+					Decision:       "/agents persona reset",
+				})
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona cleared for this session.")
+			}
+			persona := normalizePersona(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(effectiveIncomingText(env)), "/agents persona")))
+			if persona == "" {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents persona <instruction>\nUse `/agents persona reset` to clear it.")
+			}
+			if err := s.repo.SaveSessionPersona(ctx, env.ConversationID, sessionID, persona); err != nil {
+				return err
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents persona set",
+			})
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona updated for this session.")
 		case "switch":
 			if !fallbackConfigured(s.config) {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
@@ -588,47 +627,6 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		default:
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Unknown agents command.")
 		}
-	case "/persona":
-		if len(fields) == 1 {
-			persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(persona) == "" {
-				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
-			}
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
-		}
-		if fields[1] == "reset" {
-			if err := s.repo.SaveSessionPersona(ctx, env.ConversationID, sessionID, ""); err != nil {
-				return err
-			}
-			s.audit(audit.Record{
-				Event:          "control_command",
-				ConversationID: env.ConversationID,
-				SessionID:      sessionID,
-				Sender:         env.Sender,
-				MessageType:    "control",
-				Decision:       "/persona reset",
-			})
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona cleared for this session.")
-		}
-		persona := normalizePersona(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(effectiveIncomingText(env)), "/persona")))
-		if persona == "" {
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /persona <instruction>\nUse `/persona reset` to clear it.")
-		}
-		if err := s.repo.SaveSessionPersona(ctx, env.ConversationID, sessionID, persona); err != nil {
-			return err
-		}
-		s.audit(audit.Record{
-			Event:          "control_command",
-			ConversationID: env.ConversationID,
-			SessionID:      sessionID,
-			Sender:         env.Sender,
-			MessageType:    "control",
-			Decision:       "/persona set",
-		})
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona updated for this session.")
 	case "/reset":
 		active, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
 		if err == nil && active != nil {
@@ -695,31 +693,10 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 			Decision:       "/config",
 		})
 		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
-	case "/persona":
-		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
-		if len(fields) > 1 {
-			return false, nil
-		}
-		s.audit(audit.Record{
-			Event:          "control_command",
-			ConversationID: env.ConversationID,
-			SessionID:      sessionID,
-			Sender:         env.Sender,
-			MessageType:    "control",
-			Decision:       "/persona",
-		})
-		persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
-		if err != nil {
-			return true, err
-		}
-		if strings.TrimSpace(persona) == "" {
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
-		}
-		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
 	case "/agents":
 		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
 		if len(fields) < 2 {
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch>")
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona>")
 		}
 		switch fields[1] {
 		case "list":
@@ -742,6 +719,26 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 				Decision:       "/agents status",
 			})
 			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx))
+		case "persona":
+			if len(fields) > 2 {
+				return false, nil
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents persona",
+			})
+			persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
+			if err != nil {
+				return true, err
+			}
+			if strings.TrimSpace(persona) == "" {
+				return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
+			}
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
 		}
 		return false, nil
 	default:
@@ -879,9 +876,9 @@ func helpText() string {
 		"- /help",
 		"- /version",
 		"- /config",
-		"- /persona",
 		"- /agents list",
 		"- /agents status",
+		"- /agents persona",
 		"- /agents switch",
 		"- /reset",
 		"- /run",

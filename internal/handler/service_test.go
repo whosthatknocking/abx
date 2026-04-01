@@ -595,7 +595,7 @@ func TestAgentsUsageBypassesBlockedAgentInSameConversation(t *testing.T) {
 	msgs.mu.Lock()
 	got := append([]string(nil), msgs.sent...)
 	msgs.mu.Unlock()
-	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|switch>") {
+	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|switch|persona>") {
 		t.Fatalf("unexpected /agents usage response: %#v", got)
 	}
 
@@ -1026,9 +1026,9 @@ func TestPersonaSetShowAndReset(t *testing.T) {
 		ConversationID: conversationID,
 		Sender:         "+1555",
 		ChatType:       types.ChatTypeDirect,
-		Text:           "/persona Act as a witty comedian assistant",
+		Text:           "/agents persona Act as a witty comedian assistant",
 	}); err != nil {
-		t.Fatalf("handle /persona set: %v", err)
+		t.Fatalf("handle /agents persona set: %v", err)
 	}
 	if !strings.Contains(msgs.sent[0], "Persona updated for this session.") {
 		t.Fatalf("unexpected /persona set response: %q", msgs.sent[0])
@@ -1038,9 +1038,9 @@ func TestPersonaSetShowAndReset(t *testing.T) {
 		ConversationID: conversationID,
 		Sender:         "+1555",
 		ChatType:       types.ChatTypeDirect,
-		Text:           "/persona",
+		Text:           "/agents persona",
 	}); err != nil {
-		t.Fatalf("handle /persona show: %v", err)
+		t.Fatalf("handle /agents persona show: %v", err)
 	}
 	if !strings.Contains(msgs.sent[1], "Current persona:\nAct as a witty comedian assistant") {
 		t.Fatalf("unexpected /persona show response: %q", msgs.sent[1])
@@ -1058,9 +1058,9 @@ func TestPersonaSetShowAndReset(t *testing.T) {
 		ConversationID: conversationID,
 		Sender:         "+1555",
 		ChatType:       types.ChatTypeDirect,
-		Text:           "/persona reset",
+		Text:           "/agents persona reset",
 	}); err != nil {
-		t.Fatalf("handle /persona reset: %v", err)
+		t.Fatalf("handle /agents persona reset: %v", err)
 	}
 	if !strings.Contains(msgs.sent[2], "Persona cleared for this session.") {
 		t.Fatalf("unexpected /persona reset response: %q", msgs.sent[2])
@@ -1070,9 +1070,9 @@ func TestPersonaSetShowAndReset(t *testing.T) {
 		ConversationID: conversationID,
 		Sender:         "+1555",
 		ChatType:       types.ChatTypeDirect,
-		Text:           "/persona",
+		Text:           "/agents persona",
 	}); err != nil {
-		t.Fatalf("handle /persona after reset: %v", err)
+		t.Fatalf("handle /agents persona after reset: %v", err)
 	}
 	if !strings.Contains(msgs.sent[3], "No persona is set for this session.") {
 		t.Fatalf("unexpected /persona empty response: %q", msgs.sent[3])

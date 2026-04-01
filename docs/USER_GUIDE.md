@@ -26,7 +26,7 @@
 
 - `/help` shows a quick summary of the available message types and built-in commands.
 - Normal questions are sent to the configured agent.
-- `/version`, `/config`, `/persona`, `/agents list`, `/agents status`, `/agents switch`, and `/reset` are built-in control commands.
+- `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents switch`, and `/reset` are built-in control commands.
 - `/run` shows command usage help.
 - `/run <command-or-intent>` can either:
   - propose an exact shell command directly when the input already looks executable under the current policy
@@ -69,9 +69,9 @@
 - `/help`: show a quick summary of supported message types and commands
 - `/version`: show the running application version and build metadata when available
 - `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, MCP visibility, storage, command policy, debug state, and version
-- `/persona`: show the current session persona, or set it with `/persona <instruction>`, or clear it with `/persona reset`
 - `/agents list`: show the configured primary and optional fallback agents
 - `/agents status`: check whether the configured agents are reachable
+- `/agents persona`: show the current session persona, or set it with `/agents persona <instruction>`, or clear it with `/agents persona reset`
 - `/agents switch`: switch the active primary and fallback agent order for the current running process
 - `/reset`: start a fresh active session for the current chat while preserving historical state
 

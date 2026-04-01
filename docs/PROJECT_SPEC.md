@@ -302,15 +302,15 @@ All project documentation must live under the `docs/` directory. The repository 
   - After restart, `abx` must be able to resume conversation handling from local persisted state.
 
 - **Built-in Control Commands**:
-  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, `/persona`, `/agents list`, `/agents status`, `/agents switch`, and `/reset`.
+  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents switch`, and `/reset`.
   - These commands are handled by the application directly and do not require agent inference to route them.
   - `/help` returns a concise summary of the supported message types and built-in commands.
   - `/version` returns the running application version and, if available, build metadata.
   - `/config` returns a safe normalized runtime summary of the active messaging, agent, MCP, storage, and command-policy configuration.
-  - `/persona` manages a session-scoped persona instruction that is stored locally and prepended to future agent requests for the active session.
-  - `/persona` with no argument returns the currently active session persona, if any.
-  - `/persona <instruction>` stores or replaces the active session persona for that chat session.
-  - `/persona reset` clears the active session persona.
+  - `/agents persona` manages a session-scoped persona instruction that is stored locally and prepended to future agent requests for the active session.
+  - `/agents persona` with no argument returns the currently active session persona, if any.
+  - `/agents persona <instruction>` stores or replaces the active session persona for that chat session.
+  - `/agents persona reset` clears the active session persona.
   - `/agents list` returns the configured primary agent and, when present, the configured fallback agent.
   - `/agents status` checks whether each configured agent is reachable and returns a bounded live status summary.
   - `/agents switch` swaps the active primary and fallback agent order for the running process.

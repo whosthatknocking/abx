@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"sync"
@@ -500,7 +502,160 @@ func TestConfigCommandOmitsFallbackAndUsesNormalizedDefaults(t *testing.T) {
 	}
 }
 
-func TestAgentSwapSwitchesPrimaryAndFallback(t *testing.T) {
+func TestAgentsListCommandShowsConfiguredAgents(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "qwen/qwen3-4b-2507", BaseURL: "http://127.0.0.1:1234/v1"},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "gpt-5-nano"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents list",
+	}); err != nil {
+		t.Fatalf("handle /agents list: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Configured agents:") ||
+		!strings.Contains(msgs.sent[0], "- primary: qwen/qwen3-4b-2507 (openai-compatible)") ||
+		!strings.Contains(msgs.sent[0], "- fallback: gpt-5-nano (openai-compatible)") {
+		t.Fatalf("unexpected /agents list response: %q", msgs.sent[0])
+	}
+}
+
+func TestAgentsUsageBypassesBlockedAgentInSameConversation(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "first",
+		secondText:    "/agents",
+	}
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      inmemory.New(),
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	doneFirst := make(chan error, 1)
+	go func() {
+		doneFirst <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "first",
+		})
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first message to start")
+	}
+
+	doneUsage := make(chan error, 1)
+	go func() {
+		doneUsage <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "/agents",
+		})
+	}()
+
+	select {
+	case err := <-doneUsage:
+		if err != nil {
+			t.Fatalf("usage command returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected /agents usage to complete while agent request is blocked")
+	}
+
+	msgs.mu.Lock()
+	got := append([]string(nil), msgs.sent...)
+	msgs.mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|switch>") {
+		t.Fatalf("unexpected /agents usage response: %#v", got)
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-doneFirst:
+		if err != nil {
+			t.Fatalf("first handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected blocked conversation to finish after release")
+	}
+}
+
+func TestAgentsStatusCommandChecksConfiguredAgents(t *testing.T) {
+	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer okServer.Close()
+
+	failingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusBadGateway)
+	}))
+	defer failingServer.Close()
+
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "qwen/qwen3-4b-2507", BaseURL: okServer.URL + "/v1"},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "gpt-5-nano", BaseURL: failingServer.URL + "/v1"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents status",
+	}); err != nil {
+		t.Fatalf("handle /agents status: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Agent status:") ||
+		!strings.Contains(msgs.sent[0], "- primary: qwen/qwen3-4b-2507 (openai-compatible): ok") ||
+		!strings.Contains(msgs.sent[0], "- fallback: gpt-5-nano (openai-compatible): error:") {
+		t.Fatalf("unexpected /agents status response: %q", msgs.sent[0])
+	}
+}
+
+func TestAgentsSwitchSwitchesPrimaryAndFallback(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}
 	fallbackAgent := &fakeAgent{
@@ -534,9 +689,9 @@ func TestAgentSwapSwitchesPrimaryAndFallback(t *testing.T) {
 		ConversationID: "direct:+1555",
 		Sender:         "+1555",
 		ChatType:       types.ChatTypeDirect,
-		Text:           "/agent swap",
+		Text:           "/agents switch",
 	}); err != nil {
-		t.Fatalf("handle /agent swap: %v", err)
+		t.Fatalf("handle /agents switch: %v", err)
 	}
 	if len(msgs.sent) != 1 {
 		t.Fatalf("expected one sent message after swap, got %d", len(msgs.sent))
@@ -579,7 +734,7 @@ func TestAgentSwapSwitchesPrimaryAndFallback(t *testing.T) {
 	}
 }
 
-func TestAgentSwapRequiresFallback(t *testing.T) {
+func TestAgentsSwitchRequiresFallback(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}
 	svc := NewService(Options{
@@ -601,9 +756,9 @@ func TestAgentSwapRequiresFallback(t *testing.T) {
 		ConversationID: "direct:+1555",
 		Sender:         "+1555",
 		ChatType:       types.ChatTypeDirect,
-		Text:           "/agent swap",
+		Text:           "/agents switch",
 	}); err != nil {
-		t.Fatalf("handle /agent swap without fallback: %v", err)
+		t.Fatalf("handle /agents switch without fallback: %v", err)
 	}
 	if !strings.Contains(msgs.sent[0], "Fallback agent is not configured.") {
 		t.Fatalf("unexpected no-fallback response: %q", msgs.sent[0])

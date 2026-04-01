@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/whosthatknocking/abx/internal/agent"
+	"github.com/whosthatknocking/abx/internal/agent/openai"
 	"github.com/whosthatknocking/abx/internal/audit"
 	"github.com/whosthatknocking/abx/internal/config"
 	"github.com/whosthatknocking/abx/internal/repository"
@@ -181,9 +182,18 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 	if !s.allowed(env) {
 		return false
 	}
-	switch firstField(effectiveIncomingText(env)) {
+	fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
 	case "/help", "/version", "/config":
 		return true
+	case "/agents":
+		if len(fields) == 1 {
+			return true
+		}
+		return fields[1] == "list" || fields[1] == "status"
 	default:
 		return false
 	}
@@ -538,12 +548,16 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		return err
 	}
 	switch fields[0] {
-	case "/agent":
+	case "/agents":
 		if len(fields) < 2 {
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agent swap")
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch>")
 		}
 		switch fields[1] {
-		case "swap":
+		case "list":
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsListText())
+		case "status":
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx))
+		case "switch":
 			if !fallbackConfigured(s.config) {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
 			}
@@ -561,11 +575,11 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				SessionID:      sessionID,
 				Sender:         env.Sender,
 				MessageType:    "control",
-				Decision:       "/agent swap",
+				Decision:       "/agents switch",
 			})
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Swapped active agent order.\nPrimary model: %s\nFallback model: %s", normalizedPrimaryModel(s.config), strings.TrimSpace(s.config.Agent.Fallback.Model)))
 		default:
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Unknown agent command.")
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Unknown agents command.")
 		}
 	case "/reset":
 		active, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
@@ -633,6 +647,34 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 			Decision:       "/config",
 		})
 		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
+	case "/agents":
+		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
+		if len(fields) < 2 {
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch>")
+		}
+		switch fields[1] {
+		case "list":
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents list",
+			})
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsListText())
+		case "status":
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents status",
+			})
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx))
+		}
+		return false, nil
 	default:
 		return false, nil
 	}
@@ -768,10 +810,58 @@ func helpText() string {
 		"- /help",
 		"- /version",
 		"- /config",
-		"- /agent swap",
+		"- /agents list",
+		"- /agents status",
+		"- /agents switch",
 		"- /reset",
 		"- /run",
 	}, "\n")
+}
+
+func (s *Service) agentsListText() string {
+	lines := []string{
+		"Configured agents:",
+		fmt.Sprintf("- primary: %s (%s)", normalizedPrimaryModel(s.config), normalizedContract(s.config.Agent.Primary.Provider)),
+	}
+	if fallbackConfigured(s.config) {
+		lines = append(lines, fmt.Sprintf("- fallback: %s (%s)", strings.TrimSpace(s.config.Agent.Fallback.Model), normalizedContract(s.config.Agent.Fallback.Provider)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *Service) agentsStatusText(ctx context.Context) string {
+	lines := []string{
+		"Agent status:",
+		s.singleAgentStatusLine(ctx, "primary", s.config.Agent.Primary),
+	}
+	if fallbackConfigured(s.config) {
+		lines = append(lines, s.singleAgentStatusLine(ctx, "fallback", s.config.Agent.Fallback))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *Service) singleAgentStatusLine(ctx context.Context, label string, providerCfg config.ProviderConfig) string {
+	model := strings.TrimSpace(providerCfg.Model)
+	contract := normalizedContract(providerCfg.Provider)
+	checker, ok := providerForStatus(providerCfg)
+	if !ok {
+		return fmt.Sprintf("- %s: %s (%s): unsupported", label, model, contract)
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := checker.Check(checkCtx); err != nil {
+		return fmt.Sprintf("- %s: %s (%s): error: %v", label, model, contract, err)
+	}
+	return fmt.Sprintf("- %s: %s (%s): ok", label, model, contract)
+}
+
+func providerForStatus(cfg config.ProviderConfig) (agent.Provider, bool) {
+	switch normalizedContract(cfg.Provider) {
+	case "openai-compatible":
+		return openai.New(cfg), true
+	default:
+		return nil, false
+	}
 }
 
 func (s *Service) configText() string {

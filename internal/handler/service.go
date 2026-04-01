@@ -278,24 +278,24 @@ func (s *Service) allowed(env types.IncomingEnvelope) bool {
 }
 
 func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
-	history, err := s.repo.GetActiveHistory(ctx, env.ConversationID, summaryHistoryLimit)
+	history, err := s.repo.GetHistory(ctx, env.ConversationID, sessionID, summaryHistoryLimit)
 	if err != nil {
 		return err
 	}
 	history = normalizeHistoryForAgent(history)
-	summary, err := s.repo.GetActiveConversationSummary(ctx, env.ConversationID)
+	summary, err := s.repo.GetConversationSummary(ctx, env.ConversationID, sessionID)
 	if err != nil {
 		return err
 	}
-	persona, err := s.repo.GetActiveSessionPersona(ctx, env.ConversationID)
+	persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
 	if err != nil {
 		return err
 	}
-	format, err := s.repo.GetActiveSessionFormat(ctx, env.ConversationID)
+	format, err := s.repo.GetSessionFormat(ctx, env.ConversationID, sessionID)
 	if err != nil {
 		return err
 	}
-	fallbackDisabled, err := s.repo.GetActiveSessionFallbackDisabled(ctx, env.ConversationID)
+	fallbackDisabled, err := s.repo.GetSessionFallbackDisabled(ctx, env.ConversationID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -1159,10 +1159,15 @@ func prependSummaryMessage(messages []types.Message, summary string) []types.Mes
 
 func prependPersonaMessage(messages []types.Message, persona string) []types.Message {
 	persona = strings.TrimSpace(persona)
-	if persona == "" {
-		return append([]types.Message(nil), messages...)
-	}
 	out := make([]types.Message, 0, len(messages)+1)
+	if persona == "" {
+		out = append(out, types.Message{
+			Role: types.RoleSystem,
+			Text: "No custom persona is active for this session. Respond normally and do not continue any previously used persona unless the user asks for one.",
+		})
+		out = append(out, messages...)
+		return out
+	}
 	out = append(out, types.Message{
 		Role: types.RoleSystem,
 		Text: "Persona:\n" + persona,

@@ -1213,6 +1213,67 @@ func TestPersonaIsPrependedToConversationPrompt(t *testing.T) {
 	}
 }
 
+func TestPersonaResetStopsOldPersonaFromBeingPrepended(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "hello"}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents persona Act as a witty comedian assistant",
+	}); err != nil {
+		t.Fatalf("handle /agents persona set: %v", err)
+	}
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents persona reset",
+	}); err != nil {
+		t.Fatalf("handle /agents persona reset: %v", err)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	}); err != nil {
+		t.Fatalf("handle conversational message after persona reset: %v", err)
+	}
+
+	foundNeutral := false
+	for _, msg := range agentSpy.lastMessages {
+		if msg.Role != types.RoleSystem {
+			continue
+		}
+		if strings.Contains(msg.Text, "Persona:\nAct as a witty comedian assistant") {
+			t.Fatalf("did not expect old persona system message after reset, got %#v", agentSpy.lastMessages)
+		}
+		if strings.Contains(msg.Text, "No custom persona is active for this session.") {
+			foundNeutral = true
+		}
+	}
+	if !foundNeutral {
+		t.Fatalf("expected neutral no-persona system message, got %#v", agentSpy.lastMessages)
+	}
+}
+
 func TestFormatShowSetAndReset(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}
@@ -2584,19 +2645,22 @@ func TestConversationSummaryIsStoredAndPrependedForLongHistory(t *testing.T) {
 	if !strings.Contains(agentSpy.lastMessages[0].Text, "Do not invent approval tokens") {
 		t.Fatalf("expected conversation guidance prompt, got %q", agentSpy.lastMessages[0].Text)
 	}
-	if len(agentSpy.lastMessages) < 3 || agentSpy.lastMessages[1].Role != types.RoleSystem || agentSpy.lastMessages[2].Role != types.RoleSystem {
-		t.Fatalf("expected format and summary system messages, got %#v", agentSpy.lastMessages)
+	if len(agentSpy.lastMessages) < 4 || agentSpy.lastMessages[1].Role != types.RoleSystem || agentSpy.lastMessages[2].Role != types.RoleSystem || agentSpy.lastMessages[3].Role != types.RoleSystem {
+		t.Fatalf("expected format, persona, and summary system messages, got %#v", agentSpy.lastMessages)
 	}
 	if !strings.Contains(agentSpy.lastMessages[1].Text, "Format:\nRespond in plain text format.") {
 		t.Fatalf("expected default format instruction, got %q", agentSpy.lastMessages[1].Text)
 	}
-	if !strings.Contains(agentSpy.lastMessages[2].Text, "Conversation summary:") {
-		t.Fatalf("expected conversation summary prefix, got %q", agentSpy.lastMessages[2].Text)
+	if !strings.Contains(agentSpy.lastMessages[2].Text, "No custom persona is active for this session.") {
+		t.Fatalf("expected neutral no-persona instruction, got %q", agentSpy.lastMessages[2].Text)
 	}
-	if !strings.Contains(agentSpy.lastMessages[2].Text, "message x") {
-		t.Fatalf("expected older history to be summarized, got %q", agentSpy.lastMessages[2].Text)
+	if !strings.Contains(agentSpy.lastMessages[3].Text, "Conversation summary:") {
+		t.Fatalf("expected conversation summary prefix, got %q", agentSpy.lastMessages[3].Text)
 	}
-	if got := len(agentSpy.lastMessages); got != recentHistoryLimit+3 {
-		t.Fatalf("expected guidance plus format plus summary plus %d recent messages, got %d", recentHistoryLimit, got)
+	if !strings.Contains(agentSpy.lastMessages[3].Text, "message x") {
+		t.Fatalf("expected older history to be summarized, got %q", agentSpy.lastMessages[3].Text)
+	}
+	if got := len(agentSpy.lastMessages); got != recentHistoryLimit+4 {
+		t.Fatalf("expected guidance plus persona guard plus format plus summary plus %d recent messages, got %d", recentHistoryLimit, got)
 	}
 }

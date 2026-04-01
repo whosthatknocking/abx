@@ -892,7 +892,7 @@ func TestDebugModeIncludesUsedMCPIntegrations(t *testing.T) {
 	if len(msgs.sent) != 1 {
 		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
 	}
-	if !strings.Contains(msgs.sent[0], "[mcp: mcp/playwright]") {
+	if !strings.Contains(msgs.sent[0], "mcp: mcp/playwright") {
 		t.Fatalf("expected MCP integration label in debug response, got %q", msgs.sent[0])
 	}
 }
@@ -941,7 +941,7 @@ func TestDebugModeIncludesAgentStats(t *testing.T) {
 	if len(msgs.sent) != 1 {
 		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
 	}
-	if !strings.Contains(msgs.sent[0], "[stats: tokens: in=120 out=35 total=155 | ttft: 0.84s]") {
+	if !strings.Contains(msgs.sent[0], "stats: tokens: in=120 out=35 total=155 | ttft: 0.84s") {
 		t.Fatalf("expected stats in debug response, got %q", msgs.sent[0])
 	}
 }

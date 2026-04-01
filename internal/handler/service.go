@@ -820,14 +820,15 @@ func (s *Service) formatAgentReply(response types.AgentResponse) string {
 	if class == "" {
 		class = endpointClass(s.config.Agent.Primary.BaseURL)
 	}
-	label := fmt.Sprintf("[agent: %s / %s (%s)]", provider, model, class)
+	details := []string{fmt.Sprintf("agent: %s / %s (%s)", provider, model, class)}
 	if len(response.Integrations) > 0 {
-		label += "\n[mcp: " + strings.Join(response.Integrations, ", ") + "]"
+		details = append(details, "mcp: "+strings.Join(response.Integrations, ", "))
 	}
 	stats := formatAgentStats(response)
 	if stats != "" {
-		label += "\n" + stats
+		details = append(details, stats)
 	}
+	label := "[" + strings.Join(details, " | ") + "]"
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return label
@@ -853,7 +854,7 @@ func formatAgentStats(response types.AgentResponse) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "[stats: " + strings.Join(parts, " | ") + "]"
+	return "stats: " + strings.Join(parts, " | ")
 }
 
 var debugAgentSuffixPattern = regexp.MustCompile(`(?s)\n*\[agent:\s+[^\]]+\]\s*$`)

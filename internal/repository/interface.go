@@ -20,6 +20,9 @@ type Repository interface {
 	SaveSessionFormat(ctx context.Context, conversationID, sessionID, format string) error
 	GetSessionFormat(ctx context.Context, conversationID, sessionID string) (string, error)
 	GetActiveSessionFormat(ctx context.Context, conversationID string) (string, error)
+	SaveSessionFallbackDisabled(ctx context.Context, conversationID, sessionID string, disabled bool) error
+	GetSessionFallbackDisabled(ctx context.Context, conversationID, sessionID string) (bool, error)
+	GetActiveSessionFallbackDisabled(ctx context.Context, conversationID string) (bool, error)
 	RotateConversationSession(ctx context.Context, conversationID string) (string, error)
 	SavePendingApproval(ctx context.Context, conversationID, sessionID string, approval types.PendingApproval) error
 	GetPendingApproval(ctx context.Context, conversationID, requestID string) (*types.PendingApproval, error)

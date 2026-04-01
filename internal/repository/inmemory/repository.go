@@ -25,10 +25,11 @@ type conversationState struct {
 }
 
 type sessionState struct {
-	Messages []types.Message
-	Summary  string
-	Persona  string
-	Format   string
+	Messages         []types.Message
+	Summary          string
+	Persona          string
+	Format           string
+	FallbackDisabled bool
 }
 
 func New() repository.Repository {
@@ -166,6 +167,37 @@ func (r *Repository) GetActiveSessionFormat(ctx context.Context, conversationID 
 		return "", err
 	}
 	return r.GetSessionFormat(ctx, conversationID, sessionID)
+}
+
+func (r *Repository) SaveSessionFallbackDisabled(_ context.Context, conversationID, sessionID string, disabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	conv := r.ensureConversation(conversationID)
+	session := r.ensureSession(conv, sessionID)
+	session.FallbackDisabled = disabled
+	return nil
+}
+
+func (r *Repository) GetSessionFallbackDisabled(_ context.Context, conversationID, sessionID string) (bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	conv, ok := r.conversations[conversationID]
+	if !ok {
+		return false, nil
+	}
+	session, ok := conv.Sessions[sessionID]
+	if !ok {
+		return false, nil
+	}
+	return session.FallbackDisabled, nil
+}
+
+func (r *Repository) GetActiveSessionFallbackDisabled(ctx context.Context, conversationID string) (bool, error) {
+	sessionID, err := r.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		return false, err
+	}
+	return r.GetSessionFallbackDisabled(ctx, conversationID, sessionID)
 }
 
 func (r *Repository) RotateConversationSession(_ context.Context, conversationID string) (string, error) {

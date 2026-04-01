@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   summary TEXT NOT NULL DEFAULT '',
   persona TEXT NOT NULL DEFAULT '',
   format TEXT NOT NULL DEFAULT '',
+  fallback_disabled INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (conversation_id, session_id)
 );
 CREATE TABLE IF NOT EXISTS messages (
@@ -78,7 +79,10 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
 	if err := r.ensureSessionPersonaColumn(); err != nil {
 		return err
 	}
-	return r.ensureSessionFormatColumn()
+	if err := r.ensureSessionFormatColumn(); err != nil {
+		return err
+	}
+	return r.ensureSessionFallbackDisabledColumn()
 }
 
 func (r *Repository) SaveMessage(_ context.Context, conversationID, sessionID string, msg types.Message) error {
@@ -239,6 +243,36 @@ func (r *Repository) GetActiveSessionFormat(ctx context.Context, conversationID 
 	return r.GetSessionFormat(ctx, conversationID, sessionID)
 }
 
+func (r *Repository) SaveSessionFallbackDisabled(_ context.Context, conversationID, sessionID string, disabled bool) error {
+	if err := r.ensureConversation(conversationID); err != nil {
+		return err
+	}
+	if err := r.ensureSession(conversationID, sessionID); err != nil {
+		return err
+	}
+	_, err := r.exec(`UPDATE sessions SET fallback_disabled = ` + strconv.Itoa(boolInt(disabled)) + ` WHERE conversation_id = ` + q(conversationID) + ` AND session_id = ` + q(sessionID) + `;`)
+	return err
+}
+
+func (r *Repository) GetSessionFallbackDisabled(_ context.Context, conversationID, sessionID string) (bool, error) {
+	rows, err := r.query(`SELECT fallback_disabled FROM sessions WHERE conversation_id = ` + q(conversationID) + ` AND session_id = ` + q(sessionID) + `;`)
+	if err != nil {
+		return false, err
+	}
+	if len(rows) == 0 {
+		return false, nil
+	}
+	return intField(rows[0], "fallback_disabled") != 0, nil
+}
+
+func (r *Repository) GetActiveSessionFallbackDisabled(ctx context.Context, conversationID string) (bool, error) {
+	sessionID, err := r.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		return false, err
+	}
+	return r.GetSessionFallbackDisabled(ctx, conversationID, sessionID)
+}
+
 func (r *Repository) RotateConversationSession(_ context.Context, conversationID string) (string, error) {
 	if err := r.ensureConversation(conversationID); err != nil {
 		return "", err
@@ -311,12 +345,12 @@ func (r *Repository) ensureConversation(conversationID string) error {
 	}
 	sessionID := "session_" + randomSuffix()
 	_, err = r.exec(`INSERT INTO conversations (conversation_id, active_session_id) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `);` +
-		`INSERT INTO sessions (conversation_id, session_id, summary, persona, format) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '');`)
+		`INSERT INTO sessions (conversation_id, session_id, summary, persona, format, fallback_disabled) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '', 0);`)
 	return err
 }
 
 func (r *Repository) ensureSession(conversationID, sessionID string) error {
-	_, err := r.exec(`INSERT OR IGNORE INTO sessions (conversation_id, session_id, summary, persona, format) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '');`)
+	_, err := r.exec(`INSERT OR IGNORE INTO sessions (conversation_id, session_id, summary, persona, format, fallback_disabled) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '', 0);`)
 	return err
 }
 
@@ -345,6 +379,20 @@ func (r *Repository) ensureSessionFormatColumn() error {
 		}
 	}
 	_, err = r.exec(`ALTER TABLE sessions ADD COLUMN format TEXT NOT NULL DEFAULT '';`)
+	return err
+}
+
+func (r *Repository) ensureSessionFallbackDisabledColumn() error {
+	rows, err := r.query(`PRAGMA table_info(sessions);`)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if stringField(row, "name") == "fallback_disabled" {
+			return nil
+		}
+	}
+	_, err = r.exec(`ALTER TABLE sessions ADD COLUMN fallback_disabled INTEGER NOT NULL DEFAULT 0;`)
 	return err
 }
 
@@ -397,6 +445,18 @@ func stringField(row map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func intField(row map[string]any, key string) int {
+	text := stringField(row, key)
+	if text == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 func decodeMessage(row map[string]any) types.Message {

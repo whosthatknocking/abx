@@ -197,7 +197,7 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 		if len(fields) == 1 {
 			return true
 		}
-		return fields[1] == "list" || fields[1] == "status" || ((fields[1] == "persona" || fields[1] == "format") && len(fields) == 2)
+		return fields[1] == "list" || fields[1] == "status" || ((fields[1] == "persona" || fields[1] == "format" || fields[1] == "fallback") && len(fields) == 2)
 	default:
 		return false
 	}
@@ -292,6 +292,10 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	fallbackDisabled, err := s.repo.GetActiveSessionFallbackDisabled(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
 	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
 	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
 	if desiredSummary != summary {
@@ -311,7 +315,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		len(summary),
 		len(strings.TrimSpace(effectiveIncomingText(env))),
 	)
-	response, err := s.agent.Chat(ctx, agentMessages, nil)
+	response, err := s.chatWithSessionAgent(ctx, env.ConversationID, agentMessages, nil, fallbackDisabled)
 	if err != nil {
 		s.logger.Printf("agent interaction failed conversation=%s session=%s sender=%s err=%v", env.ConversationID, sessionID, env.Sender, err)
 		s.audit(audit.Record{
@@ -370,7 +374,11 @@ func (s *Service) handleRecommendedRun(ctx context.Context, env types.IncomingEn
 		return err
 	}
 	s.logger.Printf("run recommendation requested conversation=%s session=%s sender=%s input=%q", env.ConversationID, sessionID, env.Sender, input)
-	response, err := s.agent.Chat(ctx, messages, nil)
+	fallbackDisabled, err := s.repo.GetActiveSessionFallbackDisabled(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
+	response, err := s.chatWithSessionAgent(ctx, env.ConversationID, messages, nil, fallbackDisabled)
 	if err != nil {
 		s.audit(audit.Record{
 			Event:          "run_recommendation_error",
@@ -562,7 +570,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	switch fields[0] {
 	case "/agents":
 		if len(fields) < 2 {
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona|format>")
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona|format|fallback>")
 		}
 		switch fields[1] {
 		case "list":
@@ -648,6 +656,50 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				Decision:       "/agents format set",
 			})
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Format updated for this session.")
+		case "fallback":
+			if !fallbackConfigured(s.config) {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
+			}
+			if len(fields) == 2 {
+				disabled, err := s.repo.GetSessionFallbackDisabled(ctx, env.ConversationID, sessionID)
+				if err != nil {
+					return err
+				}
+				if disabled {
+					return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\ndisabled for this session")
+				}
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\nenabled for this session")
+			}
+			switch fields[2] {
+			case "disable":
+				if err := s.repo.SaveSessionFallbackDisabled(ctx, env.ConversationID, sessionID, true); err != nil {
+					return err
+				}
+				s.audit(audit.Record{
+					Event:          "control_command",
+					ConversationID: env.ConversationID,
+					SessionID:      sessionID,
+					Sender:         env.Sender,
+					MessageType:    "control",
+					Decision:       "/agents fallback disable",
+				})
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback disabled for this session.")
+			case "enable":
+				if err := s.repo.SaveSessionFallbackDisabled(ctx, env.ConversationID, sessionID, false); err != nil {
+					return err
+				}
+				s.audit(audit.Record{
+					Event:          "control_command",
+					ConversationID: env.ConversationID,
+					SessionID:      sessionID,
+					Sender:         env.Sender,
+					MessageType:    "control",
+					Decision:       "/agents fallback enable",
+				})
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback enabled for this session.")
+			default:
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents fallback <enable|disable>")
+			}
 		case "switch":
 			if !fallbackConfigured(s.config) {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
@@ -741,7 +793,7 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 	case "/agents":
 		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
 		if len(fields) < 2 {
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona>")
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona|format|fallback>")
 		}
 		switch fields[1] {
 		case "list":
@@ -801,6 +853,29 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 				return true, err
 			}
 			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current format:\n"+effectiveSessionFormat(format))
+		case "fallback":
+			if len(fields) > 2 {
+				return false, nil
+			}
+			if !fallbackConfigured(s.config) {
+				return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents fallback",
+			})
+			disabled, err := s.repo.GetSessionFallbackDisabled(ctx, env.ConversationID, sessionID)
+			if err != nil {
+				return true, err
+			}
+			if disabled {
+				return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\ndisabled for this session")
+			}
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\nenabled for this session")
 		}
 		return false, nil
 	default:
@@ -942,6 +1017,7 @@ func helpText() string {
 		"- /agents status",
 		"- /agents persona",
 		"- /agents format",
+		"- /agents fallback",
 		"- /agents switch",
 		"- /reset",
 		"- /run",
@@ -957,6 +1033,15 @@ func (s *Service) agentsListText() string {
 		lines = append(lines, fmt.Sprintf("- fallback: %s (%s)", strings.TrimSpace(s.config.Agent.Fallback.Model), normalizedContract(s.config.Agent.Fallback.Provider)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (s *Service) chatWithSessionAgent(ctx context.Context, conversationID string, messages []types.Message, tools []types.Tool, fallbackDisabled bool) (types.AgentResponse, error) {
+	if fallbackDisabled {
+		if primaryOnly, ok := s.agent.(agent.PrimaryOnly); ok {
+			return primaryOnly.ChatPrimary(ctx, messages, tools)
+		}
+	}
+	return s.agent.Chat(ctx, messages, tools)
 }
 
 func (s *Service) agentsStatusText(ctx context.Context) string {

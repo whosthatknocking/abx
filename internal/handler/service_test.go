@@ -595,7 +595,7 @@ func TestAgentsUsageBypassesBlockedAgentInSameConversation(t *testing.T) {
 	msgs.mu.Lock()
 	got := append([]string(nil), msgs.sent...)
 	msgs.mu.Unlock()
-	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|switch|persona>") {
+	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|switch|persona|format|fallback>") {
 		t.Fatalf("unexpected /agents usage response: %#v", got)
 	}
 
@@ -1257,6 +1257,92 @@ func TestFormatIsPrependedToConversationPrompt(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected format system message, got %#v", agentSpy.lastMessages)
+	}
+}
+
+func TestFallbackModeShowDisableAndEnable(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "primary"},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "fallback"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     agent.NewFallback(&fakeAgent{response: "primary"}, &fakeAgent{response: "fallback"}),
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents fallback",
+	}); err != nil {
+		t.Fatalf("handle /agents fallback show default: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Current fallback mode:\nenabled for this session") {
+		t.Fatalf("unexpected default fallback response: %q", msgs.sent[0])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents fallback disable",
+	}); err != nil {
+		t.Fatalf("handle /agents fallback disable: %v", err)
+	}
+	if !strings.Contains(msgs.sent[1], "Fallback disabled for this session.") {
+		t.Fatalf("unexpected fallback disable response: %q", msgs.sent[1])
+	}
+
+	disabled, err := repo.GetActiveSessionFallbackDisabled(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session fallback disabled: %v", err)
+	}
+	if !disabled {
+		t.Fatal("expected fallback to be disabled for the session")
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents fallback",
+	}); err != nil {
+		t.Fatalf("handle /agents fallback show disabled: %v", err)
+	}
+	if !strings.Contains(msgs.sent[2], "Current fallback mode:\ndisabled for this session") {
+		t.Fatalf("unexpected disabled fallback response: %q", msgs.sent[2])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents fallback enable",
+	}); err != nil {
+		t.Fatalf("handle /agents fallback enable: %v", err)
+	}
+	if !strings.Contains(msgs.sent[3], "Fallback enabled for this session.") {
+		t.Fatalf("unexpected fallback enable response: %q", msgs.sent[3])
+	}
+
+	disabled, err = repo.GetActiveSessionFallbackDisabled(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get fallback disabled after enable: %v", err)
+	}
+	if disabled {
+		t.Fatal("expected fallback to be enabled for the session")
 	}
 }
 
@@ -2148,6 +2234,55 @@ func TestConversationUsesFallbackAgentWhenPrimaryFails(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "fallback reply") {
 		t.Fatalf("expected fallback response, got %q", msgs.sent[0])
+	}
+}
+
+func TestConversationSkipsFallbackWhenDisabledForSession(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "primary"},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "fallback"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     agent.NewFallback(&fakeAgent{err: context.DeadlineExceeded}, &fakeAgent{response: "fallback reply"}),
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session id: %v", err)
+	}
+	if err := repo.SaveSessionFallbackDisabled(ctx, conversationID, sessionID, true); err != nil {
+		t.Fatalf("save session fallback disabled: %v", err)
+	}
+
+	err = svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	})
+	if err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Agent request failed:") {
+		t.Fatalf("expected primary error response, got %q", msgs.sent[0])
+	}
+	if strings.Contains(msgs.sent[0], "fallback reply") {
+		t.Fatalf("did not expect fallback response when disabled, got %q", msgs.sent[0])
 	}
 }
 

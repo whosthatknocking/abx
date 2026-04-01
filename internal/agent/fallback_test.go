@@ -94,3 +94,21 @@ func TestFallbackProviderSwapPrimaryAndFallback(t *testing.T) {
 		t.Fatalf("expected fallback to become primary after swap, got %q", resp.Text)
 	}
 }
+
+func TestFallbackProviderChatPrimarySkipsFallback(t *testing.T) {
+	primary := &stubProvider{chatErr: errors.New("primary failed")}
+	fallback := &stubProvider{chatResponse: types.AgentResponse{Text: "fallback"}}
+
+	provider := NewFallback(primary, fallback)
+	primaryOnly, ok := provider.(PrimaryOnly)
+	if !ok {
+		t.Fatal("expected fallback provider to support primary-only chat")
+	}
+	_, err := primaryOnly.ChatPrimary(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("expected primary-only chat to return the primary error")
+	}
+	if primary.chatCalls != 1 || fallback.chatCalls != 0 {
+		t.Fatalf("unexpected call counts: primary=%d fallback=%d", primary.chatCalls, fallback.chatCalls)
+	}
+}

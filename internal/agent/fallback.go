@@ -71,6 +71,28 @@ func (p *FallbackProvider) Check(ctx context.Context) error {
 	return fallback.Check(ctx)
 }
 
+func (p *FallbackProvider) ChatPrimary(ctx context.Context, messages []types.Message, tools []types.Tool) (types.AgentResponse, error) {
+	p.mu.RLock()
+	primary := p.primary
+	p.mu.RUnlock()
+
+	if primary == nil {
+		return types.AgentResponse{}, fmt.Errorf("no primary agent provider configured")
+	}
+	return primary.Chat(ctx, messages, tools)
+}
+
+func (p *FallbackProvider) CheckPrimary(ctx context.Context) error {
+	p.mu.RLock()
+	primary := p.primary
+	p.mu.RUnlock()
+
+	if primary == nil {
+		return fmt.Errorf("no primary agent provider configured")
+	}
+	return primary.Check(ctx)
+}
+
 func (p *FallbackProvider) SwapPrimaryAndFallback() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

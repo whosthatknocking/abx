@@ -162,3 +162,27 @@ description = "test"
 		t.Fatal("expected config")
 	}
 }
+
+func TestNormalizeRejectsUnsupportedPolicyMode(t *testing.T) {
+	cfg := &Config{
+		Agent: AgentConfig{
+			Primary: ProviderConfig{
+				Provider: "openai",
+				Model:    "gpt-4o-mini",
+			},
+		},
+		Security: SecurityConfig{TrustedNumbers: []string{"+1"}},
+		Command: CommandConfig{
+			WorkDir:    "~/abx/workspace",
+			PolicyMode: "denylist",
+		},
+	}
+
+	err := cfg.normalize()
+	if err == nil {
+		t.Fatal("expected unsupported policy mode error")
+	}
+	if got := err.Error(); got != `command.policy_mode must be "allowlist"` {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}

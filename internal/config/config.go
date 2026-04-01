@@ -158,6 +158,9 @@ func (c *Config) normalize() error {
 	if c.Command.PolicyMode == "" {
 		c.Command.PolicyMode = "allowlist"
 	}
+	if c.Command.PolicyMode != "allowlist" {
+		return fmt.Errorf("command.policy_mode must be %q", "allowlist")
+	}
 	if c.Audit.RetentionDays <= 0 {
 		c.Audit.RetentionDays = 30
 	}

@@ -235,6 +235,9 @@ func (s *Service) handleImmediateLocalControl(ctx context.Context, env types.Inc
 		Recipient:      env.Recipient,
 		MessageType:    "inbound",
 	})
+	if err := s.cancelPendingApprovalOnNonApproval(ctx, env, sessionID); err != nil {
+		return err
+	}
 	return s.handleReadOnlyControl(ctx, env, sessionID)
 }
 
@@ -576,7 +579,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		case "list":
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsListText())
 		case "status":
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx))
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx, env.ConversationID, sessionID))
 		case "persona":
 			if len(fields) == 2 {
 				persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
@@ -665,7 +668,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				if err != nil {
 					return err
 				}
-				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, sessionFallbackModeText(disabled))
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\n"+sessionFallbackModeText(disabled))
 			}
 			switch fields[2] {
 			case "disable":
@@ -812,7 +815,7 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 				MessageType:    "control",
 				Decision:       "/agents status",
 			})
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx))
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx, env.ConversationID, sessionID))
 		case "persona":
 			if len(fields) > 2 {
 				return false, nil
@@ -869,7 +872,7 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 			if err != nil {
 				return true, err
 			}
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, sessionFallbackModeText(disabled))
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\n"+sessionFallbackModeText(disabled))
 		}
 		return false, nil
 	default:
@@ -1004,17 +1007,17 @@ func helpText() string {
 		"- YES <token>: approve the currently pending command in this chat",
 		"",
 		"Built-in commands:",
-		"- /help",
-		"- /version",
-		"- /config",
-		"- /agents list",
-		"- /agents status",
-		"- /agents persona",
-		"- /agents format",
-		"- /agents fallback",
-		"- /agents switch",
-		"- /reset",
-		"- /run",
+		"- /help: show this help message",
+		"- /version: show version and build info",
+		"- /config: show current configuration",
+		"- /agents list: list configured agents",
+		"- /agents status: show agent health status",
+		"- /agents persona: get/set persona for this session",
+		"- /agents format: get/set response format for this session",
+		"- /agents fallback: get/set fallback agent status for this session",
+		"- /agents switch: swap primary and fallback agents",
+		"- /reset: start a new conversation session",
+		"- /run: execute a shell command (with approval)",
 	}, "\n")
 }
 
@@ -1038,13 +1041,17 @@ func (s *Service) chatWithSessionAgent(ctx context.Context, conversationID strin
 	return s.agent.Chat(ctx, messages, tools)
 }
 
-func (s *Service) agentsStatusText(ctx context.Context) string {
+func (s *Service) agentsStatusText(ctx context.Context, conversationID, sessionID string) string {
 	lines := []string{
 		"Agent status:",
 		s.singleAgentStatusLine(ctx, "primary", s.config.Agent.Primary),
 	}
 	if fallbackConfigured(s.config) {
 		lines = append(lines, s.singleAgentStatusLine(ctx, "fallback", s.config.Agent.Fallback))
+		disabled, err := s.repo.GetSessionFallbackDisabled(ctx, conversationID, sessionID)
+		if err == nil {
+			lines = append(lines, "Fallback: "+sessionFallbackModeText(disabled))
+		}
 	}
 	return strings.Join(lines, "\n")
 }
@@ -1264,9 +1271,9 @@ func effectiveSessionFormat(format string) string {
 
 func sessionFallbackModeText(disabled bool) string {
 	if disabled {
-		return "Current fallback mode:\ndisabled for this session"
+		return "disabled for this session"
 	}
-	return "Current fallback mode:\nenabled for this session"
+	return "enabled for this session"
 }
 
 func (s *Service) formatAgentReply(response types.AgentResponse) string {

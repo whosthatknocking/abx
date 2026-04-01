@@ -1978,6 +1978,71 @@ func TestNonApprovalReplyCancelsPendingApproval(t *testing.T) {
 	}
 }
 
+func TestImmediateLocalControlCancelsPendingApproval(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor: &fakeExecutor{
+			check: func(command string) error {
+				if command == "pwd" {
+					return nil
+				}
+				return errors.New("blocked")
+			},
+		},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/run pwd",
+	}); err != nil {
+		t.Fatalf("handle /run pwd: %v", err)
+	}
+
+	approval, err := repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active pending approval: %v", err)
+	}
+	if approval == nil {
+		t.Fatal("expected pending approval to exist")
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/config",
+	}); err != nil {
+		t.Fatalf("handle /config: %v", err)
+	}
+
+	approval, err = repo.GetActivePendingApproval(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active pending approval after /config: %v", err)
+	}
+	if approval != nil {
+		t.Fatalf("expected pending approval to be cleared after /config, got %#v", approval)
+	}
+	if len(msgs.sent) != 2 {
+		t.Fatalf("expected proposal and /config response, got %d messages", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[1], "Primary model:") {
+		t.Fatalf("expected /config response, got %q", msgs.sent[1])
+	}
+}
+
 func TestRunIntentUsesAgentRecommendedCommand(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

@@ -47,6 +47,7 @@ type AgentResponse struct {
 	Provider      string
 	Model         string
 	EndpointClass string
+	Integrations  []string
 }
 
 type PendingApproval struct {

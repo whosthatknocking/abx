@@ -102,7 +102,9 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 			Reason   string `json:"reason"`
 			Tool     string `json:"tool"`
 			Provider struct {
-				Type string `json:"type"`
+				Type        string `json:"type"`
+				PluginID    string `json:"plugin_id"`
+				ServerLabel string `json:"server_label"`
 			} `json:"provider_info"`
 		} `json:"output"`
 	}
@@ -111,11 +113,25 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 	}
 
 	parts := make([]string, 0, len(decoded.Output))
+	integrations := make([]string, 0, len(decoded.Output))
+	seenIntegrations := make(map[string]struct{}, len(decoded.Output))
 	for _, item := range decoded.Output {
 		if item.Type == "message" {
 			text := strings.TrimSpace(item.Content)
 			if text != "" {
 				parts = append(parts, text)
+			}
+		}
+		if item.Type == "tool_call" {
+			name := strings.TrimSpace(item.Provider.PluginID)
+			if name == "" {
+				name = strings.TrimSpace(item.Provider.ServerLabel)
+			}
+			if name != "" {
+				if _, exists := seenIntegrations[name]; !exists {
+					seenIntegrations[name] = struct{}{}
+					integrations = append(integrations, name)
+				}
 			}
 		}
 	}
@@ -125,6 +141,7 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 			Provider:      strings.TrimSpace(p.cfg.Provider),
 			Model:         strings.TrimSpace(p.cfg.Model),
 			EndpointClass: endpointClass(p.cfg.BaseURL),
+			Integrations:  integrations,
 		}, nil
 	}
 	for _, item := range decoded.Output {

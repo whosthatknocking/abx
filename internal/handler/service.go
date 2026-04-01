@@ -821,6 +821,9 @@ func (s *Service) formatAgentReply(response types.AgentResponse) string {
 		class = endpointClass(s.config.Agent.Primary.BaseURL)
 	}
 	label := fmt.Sprintf("[agent: %s / %s (%s)]", provider, model, class)
+	if len(response.Integrations) > 0 {
+		label += "\n[mcp: " + strings.Join(response.Integrations, ", ") + "]"
+	}
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return label

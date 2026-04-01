@@ -93,7 +93,7 @@ func TestDecodeLMStudioChatResponse(t *testing.T) {
 
 	resp, err := provider.decodeLMStudioChatResponse(strings.NewReader(`{
 		"output": [
-			{"type": "tool_call"},
+			{"type": "tool_call", "provider_info": {"type": "plugin", "plugin_id": "mcp/playwright"}},
 			{"type": "message", "content": "Here is what I found."}
 		]
 	}`))
@@ -102,6 +102,9 @@ func TestDecodeLMStudioChatResponse(t *testing.T) {
 	}
 	if resp.Text != "Here is what I found." {
 		t.Fatalf("unexpected LM Studio chat text %q", resp.Text)
+	}
+	if len(resp.Integrations) != 1 || resp.Integrations[0] != "mcp/playwright" {
+		t.Fatalf("unexpected LM Studio integrations %#v", resp.Integrations)
 	}
 }
 

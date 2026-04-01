@@ -34,6 +34,7 @@ type fakeAgent struct {
 	provider      string
 	model         string
 	endpointClass string
+	integrations  []string
 	lastMessages  []types.Message
 }
 
@@ -44,6 +45,7 @@ func (a *fakeAgent) Chat(_ context.Context, messages []types.Message, _ []types.
 		Provider:      a.provider,
 		Model:         a.model,
 		EndpointClass: a.endpointClass,
+		Integrations:  append([]string(nil), a.integrations...),
 	}, a.err
 }
 
@@ -838,6 +840,52 @@ func TestDebugModeUsesFallbackResponderMetadata(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "[agent: openai / gpt-5-nano (remote)]") {
 		t.Fatalf("expected fallback responder label in response, got %q", msgs.sent[0])
+	}
+}
+
+func TestDebugModeIncludesUsedMCPIntegrations(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Debug: config.DebugConfig{Enabled: true},
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-4b-2507",
+					BaseURL:  "http://127.0.0.1:1234/v1",
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent: &fakeAgent{
+			response:      "Hello from the model.",
+			provider:      "openai",
+			model:         "qwen/qwen3-4b-2507",
+			endpointClass: "local",
+			integrations:  []string{"mcp/playwright"},
+		},
+		Executor: &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	})
+	if err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "[mcp: mcp/playwright]") {
+		t.Fatalf("expected MCP integration label in debug response, got %q", msgs.sent[0])
 	}
 }
 

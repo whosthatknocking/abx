@@ -211,6 +211,116 @@ func TestConfigCommandOmitsFallbackAndUsesNormalizedDefaults(t *testing.T) {
 	}
 }
 
+func TestAgentSwapSwitchesPrimaryAndFallback(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	fallbackAgent := &fakeAgent{
+		response:      "fallback reply",
+		provider:      "openai",
+		model:         "gpt-5-nano",
+		endpointClass: "remote",
+	}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Debug: config.DebugConfig{Enabled: true},
+			Agent: config.AgentConfig{
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "qwen/qwen3-4b-2507", BaseURL: "http://127.0.0.1:1234/v1"},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "gpt-5-nano"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent: agent.NewFallback(
+			&fakeAgent{response: "primary reply", provider: "openai", model: "qwen/qwen3-4b-2507", endpointClass: "local"},
+			fallbackAgent,
+		),
+		Executor: &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agent swap",
+	}); err != nil {
+		t.Fatalf("handle /agent swap: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message after swap, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Swapped active agent order.") {
+		t.Fatalf("unexpected swap response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Primary model: gpt-5-nano") {
+		t.Fatalf("expected swapped primary in response, got %q", msgs.sent[0])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/config",
+	}); err != nil {
+		t.Fatalf("handle /config after swap: %v", err)
+	}
+	if !strings.Contains(msgs.sent[1], "Primary model: gpt-5-nano") {
+		t.Fatalf("expected swapped primary in /config, got %q", msgs.sent[1])
+	}
+	if !strings.Contains(msgs.sent[1], "Fallback model: qwen/qwen3-4b-2507") {
+		t.Fatalf("expected swapped fallback in /config, got %q", msgs.sent[1])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	}); err != nil {
+		t.Fatalf("handle conversation after swap: %v", err)
+	}
+	if !strings.Contains(msgs.sent[2], "fallback reply") {
+		t.Fatalf("expected swapped primary agent response, got %q", msgs.sent[2])
+	}
+	if !strings.Contains(msgs.sent[2], "[agent: openai / gpt-5-nano (remote)]") {
+		t.Fatalf("expected debug label for swapped primary, got %q", msgs.sent[2])
+	}
+}
+
+func TestAgentSwapRequiresFallback(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{Provider: "openai", Model: "qwen/qwen3-4b-2507", BaseURL: "http://127.0.0.1:1234/v1"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "primary reply"},
+		Executor:  &fakeExecutor{},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agent swap",
+	}); err != nil {
+		t.Fatalf("handle /agent swap without fallback: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Fallback agent is not configured.") {
+		t.Fatalf("unexpected no-fallback response: %q", msgs.sent[0])
+	}
+}
+
 func TestGroupMentionRunCommandIsHandledLocally(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

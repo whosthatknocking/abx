@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/whosthatknocking/abx/pkg/types"
 )
 
 type FallbackProvider struct {
+	mu       sync.RWMutex
 	primary  Provider
 	fallback Provider
 }
@@ -23,22 +25,27 @@ func NewFallback(primary, fallback Provider) Provider {
 }
 
 func (p *FallbackProvider) Chat(ctx context.Context, messages []types.Message, tools []types.Tool) (types.AgentResponse, error) {
-	if p.primary == nil {
-		if p.fallback == nil {
+	p.mu.RLock()
+	primary := p.primary
+	fallback := p.fallback
+	p.mu.RUnlock()
+
+	if primary == nil {
+		if fallback == nil {
 			return types.AgentResponse{}, fmt.Errorf("no agent provider configured")
 		}
-		return p.fallback.Chat(ctx, messages, tools)
+		return fallback.Chat(ctx, messages, tools)
 	}
 
-	response, err := p.primary.Chat(ctx, messages, tools)
+	response, err := primary.Chat(ctx, messages, tools)
 	if err == nil {
 		return response, nil
 	}
-	if p.fallback == nil {
+	if fallback == nil {
 		return types.AgentResponse{}, err
 	}
 
-	fallbackResponse, fallbackErr := p.fallback.Chat(ctx, messages, tools)
+	fallbackResponse, fallbackErr := fallback.Chat(ctx, messages, tools)
 	if fallbackErr == nil {
 		return fallbackResponse, nil
 	}
@@ -46,15 +53,30 @@ func (p *FallbackProvider) Chat(ctx context.Context, messages []types.Message, t
 }
 
 func (p *FallbackProvider) Check(ctx context.Context) error {
-	if p.primary != nil {
-		if err := p.primary.Check(ctx); err == nil {
+	p.mu.RLock()
+	primary := p.primary
+	fallback := p.fallback
+	p.mu.RUnlock()
+
+	if primary != nil {
+		if err := primary.Check(ctx); err == nil {
 			return nil
-		} else if p.fallback == nil {
+		} else if fallback == nil {
 			return err
 		}
 	}
-	if p.fallback == nil {
+	if fallback == nil {
 		return fmt.Errorf("no agent provider configured")
 	}
-	return p.fallback.Check(ctx)
+	return fallback.Check(ctx)
+}
+
+func (p *FallbackProvider) SwapPrimaryAndFallback() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.fallback == nil {
+		return fmt.Errorf("fallback agent is not configured")
+	}
+	p.primary, p.fallback = p.fallback, p.primary
+	return nil
 }

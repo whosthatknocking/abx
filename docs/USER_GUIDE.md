@@ -25,7 +25,7 @@
 
 - `/help` shows a quick summary of the available message types and built-in commands.
 - Normal questions are sent to the configured agent.
-- `/version`, `/config`, and `/reset` are built-in control commands.
+- `/version`, `/config`, `/agent swap`, and `/reset` are built-in control commands.
 - `/run` shows command usage help.
 - `/run <command-or-intent>` can either:
   - propose an exact shell command directly when the input already looks executable under the current policy
@@ -68,6 +68,7 @@
 - `/help`: show a quick summary of supported message types and commands
 - `/version`: show the running application version and build metadata when available
 - `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, optional fallback, MCP visibility, storage, command policy, debug state, and version
+- `/agent swap`: switch the active primary and fallback agent order for the current running process
 - `/reset`: start a fresh active session for the current chat while preserving historical state
 
 ## Resetting Context

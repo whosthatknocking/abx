@@ -491,6 +491,35 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 			Decision:       "/config",
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
+	case "/agent":
+		if len(fields) < 2 {
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agent swap")
+		}
+		switch fields[1] {
+		case "swap":
+			if !fallbackConfigured(s.config) {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
+			}
+			switcher, ok := s.agent.(agent.Switcher)
+			if !ok {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Agent switching is not supported by the current runtime.")
+			}
+			if err := switcher.SwapPrimaryAndFallback(); err != nil {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Agent switch failed: %v", err))
+			}
+			s.config.Agent.Primary, s.config.Agent.Fallback = s.config.Agent.Fallback, s.config.Agent.Primary
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agent swap",
+			})
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Swapped active agent order.\nPrimary model: %s\nFallback model: %s", normalizedPrimaryModel(s.config), strings.TrimSpace(s.config.Agent.Fallback.Model)))
+		default:
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Unknown agent command.")
+		}
 	case "/reset":
 		active, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
 		if err == nil && active != nil {
@@ -641,6 +670,7 @@ func helpText() string {
 		"- /help",
 		"- /version",
 		"- /config",
+		"- /agent swap",
 		"- /reset",
 		"- /run",
 	}, "\n")

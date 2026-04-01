@@ -173,32 +173,49 @@ func TestDecodeEnvelopeFromRPCGroupMention(t *testing.T) {
 }
 
 func TestDecodeEnvelopeFromRPCGroupCommandNormalizesMentionPrefix(t *testing.T) {
-	payload := mustRPCMessage(t, map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "receive",
-		"params": map[string]any{
-			"envelope": map[string]any{
-				"sourceNumber": "+15551230000",
-				"timestamp":    "1710000000000",
-				"dataMessage": map[string]any{
-					"message": "@abx /run pwd",
-					"groupInfo": map[string]any{
-						"groupId": "group-123",
-					},
-					"mentions": []any{
-						map[string]any{"number": "+15550001111"},
+	tests := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{name: "run", message: "@abx /run pwd", want: "/run pwd"},
+		{name: "help", message: "@abx /help", want: "/help"},
+		{name: "version", message: "@abx /version", want: "/version"},
+		{name: "config", message: "@abx /config", want: "/config"},
+		{name: "agents", message: "@abx /agents persona", want: "/agents persona"},
+		{name: "reset", message: "@abx /reset", want: "/reset"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := mustRPCMessage(t, map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "receive",
+				"params": map[string]any{
+					"envelope": map[string]any{
+						"sourceNumber": "+15551230000",
+						"timestamp":    "1710000000000",
+						"dataMessage": map[string]any{
+							"message": tt.message,
+							"groupInfo": map[string]any{
+								"groupId": "group-123",
+							},
+							"mentions": []any{
+								map[string]any{"number": "+15550001111"},
+							},
+						},
 					},
 				},
-			},
-		},
-	})
+			})
 
-	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
-	if !ok {
-		t.Fatal("expected group envelope to decode")
-	}
-	if got.NormalizedText != "/run pwd" {
-		t.Fatalf("unexpected normalized group command text: %q", got.NormalizedText)
+			got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+			if !ok {
+				t.Fatal("expected group envelope to decode")
+			}
+			if got.NormalizedText != tt.want {
+				t.Fatalf("unexpected normalized group command text: %q", got.NormalizedText)
+			}
+		})
 	}
 }
 

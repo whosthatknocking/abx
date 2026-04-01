@@ -246,12 +246,10 @@ func stripLeadingMentions(text string) string {
 
 func extractLeadingSlashCommand(text string) (string, bool) {
 	text = strings.TrimSpace(text)
-	for _, command := range []string{"/run", "/help", "/version", "/config", "/reset"} {
-		if idx := strings.Index(text, command); idx >= 0 {
-			prefix := strings.TrimSpace(text[:idx])
-			if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
-				return strings.TrimSpace(text[idx:]), true
-			}
+	if idx := strings.Index(text, "/"); idx >= 0 {
+		prefix := strings.TrimSpace(text[:idx])
+		if prefix == "" || !strings.ContainsAny(prefix, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
+			return strings.TrimSpace(text[idx:]), true
 		}
 	}
 	return "", false

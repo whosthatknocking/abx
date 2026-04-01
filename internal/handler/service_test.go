@@ -799,6 +799,40 @@ func TestGroupMentionRunCommandIsHandledLocally(t *testing.T) {
 	}
 }
 
+func TestGroupMentionAgentsPersonaIsHandledLocally(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "group:test",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		MentionedBot:   true,
+		Text:           "@abx /agents persona",
+		NormalizedText: "/agents persona",
+	})
+	if err != nil {
+		t.Fatalf("handle group /agents persona: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "No persona is set for this session.") {
+		t.Fatalf("unexpected group /agents persona response: %q", msgs.sent[0])
+	}
+}
+
 func TestGroupMentionRunIntentWithNonAtPrefixIsHandledLocally(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}
@@ -937,6 +971,57 @@ func TestGroupMentionControlCommandIsHandledLocally(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "Available message types:") {
 		t.Fatalf("unexpected group /help response: %q", msgs.sent[0])
+	}
+}
+
+func TestGroupMentionBuiltInCommandsBehaveLocally(t *testing.T) {
+	tests := []struct {
+		name       string
+		text       string
+		normalized string
+		want       string
+	}{
+		{name: "help", text: "@abx /help", normalized: "/help", want: "Available message types:"},
+		{name: "version", text: "@abx /version", normalized: "/version", want: "abx version test"},
+		{name: "config", text: "@abx /config", normalized: "/config", want: "Primary model:"},
+		{name: "agents_usage", text: "@abx /agents", normalized: "/agents", want: "Usage: /agents <list|status|switch|persona|format|fallback>"},
+		{name: "agents_persona", text: "@abx /agents persona", normalized: "/agents persona", want: "No persona is set for this session."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := inmemory.New()
+			msgs := &fakeMessenger{}
+			svc := NewService(Options{
+				Version: "test",
+				Config: &config.Config{
+					Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+				},
+				Repo:      repo,
+				Auditor:   nil,
+				Messenger: msgs,
+				Agent:     &fakeAgent{response: "ignored"},
+				Executor:  &fakeExecutor{},
+			})
+
+			err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+				ConversationID: "group:test",
+				Sender:         "+1555",
+				ChatType:       types.ChatTypeGroup,
+				MentionedBot:   true,
+				Text:           tt.text,
+				NormalizedText: tt.normalized,
+			})
+			if err != nil {
+				t.Fatalf("handle group command: %v", err)
+			}
+			if len(msgs.sent) != 1 {
+				t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+			}
+			if !strings.Contains(msgs.sent[0], tt.want) {
+				t.Fatalf("unexpected group command response: %q", msgs.sent[0])
+			}
+		})
 	}
 }
 

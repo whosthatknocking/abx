@@ -48,6 +48,7 @@ type AgentResponse struct {
 	Model         string
 	EndpointClass string
 	Integrations  []string
+	ToolSummaries []string
 	InputTokens   int
 	OutputTokens  int
 	TotalTokens   int

@@ -119,6 +119,50 @@ func TestDecodeLMStudioChatResponse(t *testing.T) {
 	}
 }
 
+func TestDecodeLMStudioChatResponseAppendsToolSummaryWhenReplyReferencesAbove(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL:      "http://127.0.0.1:1234/v1",
+		Model:        "qwen/qwen3-4b-2507",
+		Integrations: []string{"mcp/yfinance"},
+	})
+
+	resp, err := provider.decodeLMStudioChatResponse(strings.NewReader(`{
+		"output": [
+			{
+				"type": "tool_call",
+				"tool": "get_option_expirations",
+				"provider_info": {"type": "plugin", "plugin_id": "mcp/yfinance"},
+				"output": "[{\"type\":\"text\",\"text\":\"2026-04-01\"},{\"type\":\"text\",\"text\":\"2026-04-02\"},{\"type\":\"text\",\"text\":\"2026-04-03\"}]"
+			},
+			{
+				"type": "tool_call",
+				"tool": "get_option_chain",
+				"provider_info": {"type": "plugin", "plugin_id": "mcp/yfinance"},
+				"output": "[{\"type\":\"text\",\"text\":\"{\\n  \\\"symbol\\\": \\\"SPY\\\",\\n  \\\"date\\\": \\\"2026-04-01\\\",\\n  \\\"calls\\\": {\\n    \\\"data\\\": [[1],[2],[3]]\\n  },\\n  \\\"puts\\\": {\\n    \\\"data\\\": [[1],[2]]\\n  }\\n}\"}]"
+			},
+			{
+				"type": "message",
+				"content": "The option chain is provided above."
+			}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("decode LM Studio chat response: %v", err)
+	}
+	if !strings.Contains(resp.Text, "Tool results:") {
+		t.Fatalf("expected tool results to be appended, got %q", resp.Text)
+	}
+	if !strings.Contains(resp.Text, "Option expirations: 2026-04-01, 2026-04-02, 2026-04-03") {
+		t.Fatalf("expected expiration summary in %q", resp.Text)
+	}
+	if !strings.Contains(resp.Text, "Option chain for SPY on 2026-04-01: 3 calls, 2 puts.") {
+		t.Fatalf("expected option chain summary in %q", resp.Text)
+	}
+	if len(resp.ToolSummaries) != 2 {
+		t.Fatalf("expected tool summaries metadata, got %#v", resp.ToolSummaries)
+	}
+}
+
 func TestDecodeOpenAIChatResponseIncludesUsage(t *testing.T) {
 	provider := New(config.ProviderConfig{
 		BaseURL: "https://api.example.test/v1",

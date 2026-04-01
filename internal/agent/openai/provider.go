@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -111,6 +112,7 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 		Output []struct {
 			Type     string `json:"type"`
 			Content  string `json:"content"`
+			Output   string `json:"output"`
 			Reason   string `json:"reason"`
 			Tool     string `json:"tool"`
 			Provider struct {
@@ -131,6 +133,7 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 
 	parts := make([]string, 0, len(decoded.Output))
 	integrations := make([]string, 0, len(decoded.Output))
+	toolSummaries := make([]string, 0, len(decoded.Output))
 	seenIntegrations := make(map[string]struct{}, len(decoded.Output))
 	for _, item := range decoded.Output {
 		if item.Type == "message" {
@@ -150,15 +153,23 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 					integrations = append(integrations, name)
 				}
 			}
+			if summary := summarizeToolCall(item.Tool, item.Output); summary != "" {
+				toolSummaries = append(toolSummaries, summary)
+			}
 		}
+	}
+	text := strings.Join(parts, "\n\n")
+	if shouldAppendToolSummaries(text) && len(toolSummaries) > 0 {
+		text = appendToolSummaries(text, toolSummaries)
 	}
 	if len(parts) > 0 {
 		return types.AgentResponse{
-			Text:          strings.Join(parts, "\n\n"),
+			Text:          text,
 			Provider:      strings.TrimSpace(p.cfg.Provider),
 			Model:         strings.TrimSpace(p.cfg.Model),
 			EndpointClass: endpointClass(p.cfg.BaseURL),
 			Integrations:  integrations,
+			ToolSummaries: append([]string(nil), toolSummaries...),
 			InputTokens:   decoded.Stats.InputTokens,
 			OutputTokens:  decoded.Stats.TotalOutputTokens,
 			TotalTokens:   decoded.Stats.InputTokens + decoded.Stats.TotalOutputTokens,
@@ -394,4 +405,149 @@ func endpointClass(baseURL string) string {
 	default:
 		return "remote"
 	}
+}
+
+func shouldAppendToolSummaries(text string) bool {
+	text = strings.TrimSpace(strings.ToLower(text))
+	if text == "" {
+		return true
+	}
+	for _, marker := range []string{
+		"provided above",
+		"shown above",
+		"listed above",
+		"see above",
+		"above.",
+		"above,",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendToolSummaries(text string, summaries []string) string {
+	lines := make([]string, 0, len(summaries)+1)
+	lines = append(lines, "Tool results:")
+	for _, summary := range summaries {
+		summary = strings.TrimSpace(summary)
+		if summary == "" {
+			continue
+		}
+		lines = append(lines, "- "+summary)
+	}
+	suffix := strings.Join(lines, "\n")
+	if strings.TrimSpace(text) == "" {
+		return suffix
+	}
+	return strings.TrimSpace(text) + "\n\n" + suffix
+}
+
+func summarizeToolCall(tool, output string) string {
+	texts := extractToolOutputTexts(output)
+	if len(texts) == 0 {
+		return ""
+	}
+	switch strings.TrimSpace(tool) {
+	case "get_option_expirations":
+		return summarizeOptionExpirations(texts)
+	case "get_option_chain":
+		if summary := summarizeOptionChain(texts[0]); summary != "" {
+			return summary
+		}
+	}
+	return summarizeGenericToolOutput(tool, texts)
+}
+
+func extractToolOutputTexts(output string) []string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil
+	}
+	var items []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(output), &items); err == nil {
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if strings.TrimSpace(item.Text) != "" {
+				out = append(out, strings.TrimSpace(item.Text))
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []string{output}
+}
+
+func summarizeOptionExpirations(texts []string) string {
+	values := make([]string, 0, len(texts))
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text != "" {
+			values = append(values, text)
+		}
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	preview := values
+	if len(preview) > 6 {
+		preview = preview[:6]
+	}
+	summary := fmt.Sprintf("Option expirations: %s", strings.Join(preview, ", "))
+	if len(values) > len(preview) {
+		summary += fmt.Sprintf(" (%d total)", len(values))
+	}
+	return summary
+}
+
+func summarizeOptionChain(text string) string {
+	var decoded struct {
+		Symbol string `json:"symbol"`
+		Date   string `json:"date"`
+		Calls  struct {
+			Data [][]any `json:"data"`
+		} `json:"calls"`
+		Puts struct {
+			Data [][]any `json:"data"`
+		} `json:"puts"`
+	}
+	if err := json.Unmarshal([]byte(text), &decoded); err == nil {
+		if decoded.Symbol != "" || decoded.Date != "" {
+			return fmt.Sprintf(
+				"Option chain for %s on %s: %d calls, %d puts.",
+				strings.TrimSpace(decoded.Symbol),
+				strings.TrimSpace(decoded.Date),
+				len(decoded.Calls.Data),
+				len(decoded.Puts.Data),
+			)
+		}
+	}
+	return ""
+}
+
+func summarizeGenericToolOutput(tool string, texts []string) string {
+	joined := strings.TrimSpace(strings.Join(texts, " "))
+	if joined == "" {
+		return ""
+	}
+	joined = compactToolWhitespace(joined)
+	if len(joined) > 240 {
+		joined = joined[:237] + "..."
+	}
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return joined
+	}
+	return fmt.Sprintf("%s: %s", tool, joined)
+}
+
+var toolWhitespace = regexp.MustCompile(`\s+`)
+
+func compactToolWhitespace(text string) string {
+	return strings.TrimSpace(toolWhitespace.ReplaceAllString(text, " "))
 }

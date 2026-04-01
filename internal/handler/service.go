@@ -665,10 +665,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				if err != nil {
 					return err
 				}
-				if disabled {
-					return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\ndisabled for this session")
-				}
-				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\nenabled for this session")
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, sessionFallbackModeText(disabled))
 			}
 			switch fields[2] {
 			case "disable":
@@ -872,10 +869,7 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 			if err != nil {
 				return true, err
 			}
-			if disabled {
-				return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\ndisabled for this session")
-			}
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current fallback mode:\nenabled for this session")
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, sessionFallbackModeText(disabled))
 		}
 		return false, nil
 	default:
@@ -1265,6 +1259,13 @@ func effectiveSessionFormat(format string) string {
 		return defaultSessionFormat
 	}
 	return format
+}
+
+func sessionFallbackModeText(disabled bool) string {
+	if disabled {
+		return "Current fallback mode:\ndisabled for this session"
+	}
+	return "Current fallback mode:\nenabled for this session"
 }
 
 func (s *Service) formatAgentReply(response types.AgentResponse) string {

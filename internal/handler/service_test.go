@@ -268,6 +268,89 @@ func TestHandleMessageSerializesSameConversation(t *testing.T) {
 	}
 }
 
+func TestReadOnlyControlBypassesBlockedAgentInSameConversation(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "first",
+		secondText:    "/config",
+	}
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      inmemory.New(),
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	doneFirst := make(chan error, 1)
+	go func() {
+		doneFirst <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "first",
+		})
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first message to start")
+	}
+
+	doneConfig := make(chan error, 1)
+	go func() {
+		doneConfig <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "/config",
+		})
+	}()
+
+	select {
+	case err := <-doneConfig:
+		if err != nil {
+			t.Fatalf("read-only control returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected /config to complete while agent request is still blocked")
+	}
+
+	select {
+	case <-agentSpy.secondStarted:
+		t.Fatal("did not expect /config to call the agent")
+	default:
+	}
+
+	msgs.mu.Lock()
+	got := append([]string(nil), msgs.sent...)
+	msgs.mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("expected one immediate control response, got %d", len(got))
+	}
+	if !strings.Contains(got[0], "Version: test") {
+		t.Fatalf("unexpected /config response: %q", got[0])
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-doneFirst:
+		if err != nil {
+			t.Fatalf("first handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected blocked conversation to finish after release")
+	}
+}
+
 func TestConfigCommandIsHandledLocally(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

@@ -98,6 +98,9 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope) error {
+	if s.isImmediateLocalControl(env) {
+		return s.handleImmediateLocalControl(ctx, env)
+	}
 	lock := s.conversationLock(env.ConversationID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -172,6 +175,53 @@ func (s *Service) conversationLock(conversationID string) *sync.Mutex {
 	}
 	lock, _ := s.locks.LoadOrStore(conversationID, &sync.Mutex{})
 	return lock.(*sync.Mutex)
+}
+
+func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
+	if !s.allowed(env) {
+		return false
+	}
+	switch firstField(effectiveIncomingText(env)) {
+	case "/help", "/version", "/config":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) handleImmediateLocalControl(ctx context.Context, env types.IncomingEnvelope) error {
+	text := effectiveIncomingText(env)
+	s.logger.Printf("interaction accepted conversation=%s sender=%s chat_type=%s mentioned=%t text_len=%d immediate_local=%t", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot, len(strings.TrimSpace(text)), true)
+
+	sessionID, err := s.repo.GetActiveSessionID(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
+	inbound := types.Message{
+		ID:             coalesce(env.ID, mustID()),
+		ConversationID: env.ConversationID,
+		SessionID:      sessionID,
+		Sender:         env.Sender,
+		Recipient:      env.Recipient,
+		Role:           types.RoleUser,
+		Kind:           types.MessageKindInbound,
+		ChatType:       env.ChatType,
+		Text:           text,
+		MentionedBot:   env.MentionedBot,
+		CreatedAt:      coalesceTime(env.CreatedAt, time.Now()),
+	}
+	if err := s.repo.SaveMessage(ctx, env.ConversationID, sessionID, inbound); err != nil {
+		return err
+	}
+	s.audit(audit.Record{
+		Event:          "message_received",
+		ConversationID: env.ConversationID,
+		SessionID:      sessionID,
+		Sender:         env.Sender,
+		Recipient:      env.Recipient,
+		MessageType:    "inbound",
+	})
+	return s.handleReadOnlyControl(ctx, env, sessionID)
 }
 
 func (s *Service) cancelPendingApprovalOnNonApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
@@ -484,37 +534,10 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	if len(fields) == 0 {
 		return nil
 	}
+	if handled, err := s.handleReadOnlyControlMaybe(ctx, env, sessionID, fields[0]); handled {
+		return err
+	}
 	switch fields[0] {
-	case "/help":
-		s.audit(audit.Record{
-			Event:          "control_command",
-			ConversationID: env.ConversationID,
-			SessionID:      sessionID,
-			Sender:         env.Sender,
-			MessageType:    "control",
-			Decision:       "/help",
-		})
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, helpText())
-	case "/version":
-		s.audit(audit.Record{
-			Event:          "control_command",
-			ConversationID: env.ConversationID,
-			SessionID:      sessionID,
-			Sender:         env.Sender,
-			MessageType:    "control",
-			Decision:       "/version",
-		})
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.versionText())
-	case "/config":
-		s.audit(audit.Record{
-			Event:          "control_command",
-			ConversationID: env.ConversationID,
-			SessionID:      sessionID,
-			Sender:         env.Sender,
-			MessageType:    "control",
-			Decision:       "/config",
-		})
-		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
 	case "/agent":
 		if len(fields) < 2 {
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agent swap")
@@ -572,6 +595,49 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	}
 }
 
+func (s *Service) handleReadOnlyControl(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
+	command := firstField(effectiveIncomingText(env))
+	_, err := s.handleReadOnlyControlMaybe(ctx, env, sessionID, command)
+	return err
+}
+
+func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.IncomingEnvelope, sessionID, command string) (bool, error) {
+	switch command {
+	case "/help":
+		s.audit(audit.Record{
+			Event:          "control_command",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "control",
+			Decision:       "/help",
+		})
+		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, helpText())
+	case "/version":
+		s.audit(audit.Record{
+			Event:          "control_command",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "control",
+			Decision:       "/version",
+		})
+		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.versionText())
+	case "/config":
+		s.audit(audit.Record{
+			Event:          "control_command",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "control",
+			Decision:       "/config",
+		})
+		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
+	default:
+		return false, nil
+	}
+}
+
 func (s *Service) sendAssistant(ctx context.Context, conversationID, sessionID string, chatType types.ChatType, text string) error {
 	return s.sendAssistantDisplay(ctx, conversationID, sessionID, chatType, text, text)
 }
@@ -606,6 +672,14 @@ func (s *Service) shellRequest(text string) (string, bool) {
 		return strings.TrimSpace(strings.TrimPrefix(text, "/run ")), true
 	}
 	return "", false
+}
+
+func firstField(text string) string {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func isRunHelp(text string) bool {

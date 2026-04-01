@@ -48,6 +48,10 @@ type AgentResponse struct {
 	Model         string
 	EndpointClass string
 	Integrations  []string
+	InputTokens   int
+	OutputTokens  int
+	TotalTokens   int
+	TimeToFirst   float64
 }
 
 type PendingApproval struct {

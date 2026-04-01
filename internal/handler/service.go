@@ -824,11 +824,36 @@ func (s *Service) formatAgentReply(response types.AgentResponse) string {
 	if len(response.Integrations) > 0 {
 		label += "\n[mcp: " + strings.Join(response.Integrations, ", ") + "]"
 	}
+	stats := formatAgentStats(response)
+	if stats != "" {
+		label += "\n" + stats
+	}
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return label
 	}
 	return trimmed + "\n\n" + label
+}
+
+func formatAgentStats(response types.AgentResponse) string {
+	parts := make([]string, 0, 2)
+	if response.TotalTokens > 0 || response.InputTokens > 0 || response.OutputTokens > 0 {
+		switch {
+		case response.InputTokens > 0 && response.OutputTokens > 0 && response.TotalTokens > 0:
+			parts = append(parts, fmt.Sprintf("tokens: in=%d out=%d total=%d", response.InputTokens, response.OutputTokens, response.TotalTokens))
+		case response.TotalTokens > 0:
+			parts = append(parts, fmt.Sprintf("tokens: total=%d", response.TotalTokens))
+		default:
+			parts = append(parts, fmt.Sprintf("tokens: in=%d out=%d", response.InputTokens, response.OutputTokens))
+		}
+	}
+	if response.TimeToFirst > 0 {
+		parts = append(parts, fmt.Sprintf("ttft: %.2fs", response.TimeToFirst))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[stats: " + strings.Join(parts, " | ") + "]"
 }
 
 var debugAgentSuffixPattern = regexp.MustCompile(`(?s)\n*\[agent:\s+[^\]]+\]\s*$`)

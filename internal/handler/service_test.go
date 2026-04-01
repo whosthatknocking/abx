@@ -35,6 +35,10 @@ type fakeAgent struct {
 	model         string
 	endpointClass string
 	integrations  []string
+	inputTokens   int
+	outputTokens  int
+	totalTokens   int
+	timeToFirst   float64
 	lastMessages  []types.Message
 }
 
@@ -46,6 +50,10 @@ func (a *fakeAgent) Chat(_ context.Context, messages []types.Message, _ []types.
 		Model:         a.model,
 		EndpointClass: a.endpointClass,
 		Integrations:  append([]string(nil), a.integrations...),
+		InputTokens:   a.inputTokens,
+		OutputTokens:  a.outputTokens,
+		TotalTokens:   a.totalTokens,
+		TimeToFirst:   a.timeToFirst,
 	}, a.err
 }
 
@@ -886,6 +894,55 @@ func TestDebugModeIncludesUsedMCPIntegrations(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "[mcp: mcp/playwright]") {
 		t.Fatalf("expected MCP integration label in debug response, got %q", msgs.sent[0])
+	}
+}
+
+func TestDebugModeIncludesAgentStats(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Debug: config.DebugConfig{Enabled: true},
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-4b-2507",
+					BaseURL:  "http://127.0.0.1:1234/v1",
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent: &fakeAgent{
+			response:      "Hello from the model.",
+			provider:      "openai",
+			model:         "qwen/qwen3-4b-2507",
+			endpointClass: "local",
+			inputTokens:   120,
+			outputTokens:  35,
+			totalTokens:   155,
+			timeToFirst:   0.84,
+		},
+		Executor: &fakeExecutor{},
+	})
+
+	err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	})
+	if err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one sent message, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "[stats: tokens: in=120 out=35 total=155 | ttft: 0.84s]") {
+		t.Fatalf("expected stats in debug response, got %q", msgs.sent[0])
 	}
 }
 

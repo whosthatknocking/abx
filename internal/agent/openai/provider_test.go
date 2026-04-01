@@ -95,7 +95,12 @@ func TestDecodeLMStudioChatResponse(t *testing.T) {
 		"output": [
 			{"type": "tool_call", "provider_info": {"type": "plugin", "plugin_id": "mcp/playwright"}},
 			{"type": "message", "content": "Here is what I found."}
-		]
+		],
+		"stats": {
+			"input_tokens": 123,
+			"total_output_tokens": 45,
+			"time_to_first_token_seconds": 1.25
+		}
 	}`))
 	if err != nil {
 		t.Fatalf("decode LM Studio chat response: %v", err)
@@ -105,6 +110,36 @@ func TestDecodeLMStudioChatResponse(t *testing.T) {
 	}
 	if len(resp.Integrations) != 1 || resp.Integrations[0] != "mcp/playwright" {
 		t.Fatalf("unexpected LM Studio integrations %#v", resp.Integrations)
+	}
+	if resp.InputTokens != 123 || resp.OutputTokens != 45 || resp.TotalTokens != 168 {
+		t.Fatalf("unexpected LM Studio token stats %#v", resp)
+	}
+	if resp.TimeToFirst != 1.25 {
+		t.Fatalf("unexpected LM Studio ttft %v", resp.TimeToFirst)
+	}
+}
+
+func TestDecodeOpenAIChatResponseIncludesUsage(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL: "https://api.example.test/v1",
+		Model:   "gpt-5-nano",
+	})
+
+	resp, err := provider.decodeOpenAIChatResponse(strings.NewReader(`{
+		"choices": [
+			{"message": {"content": "Hello"}}
+		],
+		"usage": {
+			"prompt_tokens": 11,
+			"completion_tokens": 7,
+			"total_tokens": 18
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("decode openai chat response: %v", err)
+	}
+	if resp.InputTokens != 11 || resp.OutputTokens != 7 || resp.TotalTokens != 18 {
+		t.Fatalf("unexpected OpenAI usage stats %#v", resp)
 	}
 }
 

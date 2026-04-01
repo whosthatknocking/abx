@@ -79,6 +79,11 @@ func (p *Provider) decodeOpenAIChatResponse(body io.Reader) (types.AgentResponse
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.NewDecoder(body).Decode(&decoded); err != nil {
 		return types.AgentResponse{}, fmt.Errorf("decode openai response: %w", err)
@@ -91,6 +96,9 @@ func (p *Provider) decodeOpenAIChatResponse(body io.Reader) (types.AgentResponse
 		Provider:      strings.TrimSpace(p.cfg.Provider),
 		Model:         strings.TrimSpace(p.cfg.Model),
 		EndpointClass: endpointClass(p.cfg.BaseURL),
+		InputTokens:   decoded.Usage.PromptTokens,
+		OutputTokens:  decoded.Usage.CompletionTokens,
+		TotalTokens:   decoded.Usage.TotalTokens,
 	}, nil
 }
 
@@ -107,6 +115,11 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 				ServerLabel string `json:"server_label"`
 			} `json:"provider_info"`
 		} `json:"output"`
+		Stats struct {
+			InputTokens             int     `json:"input_tokens"`
+			TotalOutputTokens       int     `json:"total_output_tokens"`
+			TimeToFirstTokenSeconds float64 `json:"time_to_first_token_seconds"`
+		} `json:"stats"`
 	}
 	if err := json.NewDecoder(body).Decode(&decoded); err != nil {
 		return types.AgentResponse{}, fmt.Errorf("decode LM Studio response: %w", err)
@@ -142,6 +155,10 @@ func (p *Provider) decodeLMStudioChatResponse(body io.Reader) (types.AgentRespon
 			Model:         strings.TrimSpace(p.cfg.Model),
 			EndpointClass: endpointClass(p.cfg.BaseURL),
 			Integrations:  integrations,
+			InputTokens:   decoded.Stats.InputTokens,
+			OutputTokens:  decoded.Stats.TotalOutputTokens,
+			TotalTokens:   decoded.Stats.InputTokens + decoded.Stats.TotalOutputTokens,
+			TimeToFirst:   decoded.Stats.TimeToFirstTokenSeconds,
 		}, nil
 	}
 	for _, item := range decoded.Output {

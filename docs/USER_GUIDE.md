@@ -19,6 +19,7 @@
 - Start `signal-cli` in JSON-RPC daemon mode before starting `abx`.
 - By default, `abx` expects a local UNIX socket at `~/.local/share/signal-cli/json-rpc.sock`.
 - If you use a local OpenAI-compatible agent such as LM Studio, you can enable or disable forwarded MCP server names with `[[mcp.servers]]` in `config.toml`.
+- You can control how long `abx` waits for each agent with `agent.primary.request_timeout_seconds` and `agent.fallback.request_timeout_seconds`. This is especially useful when a slower local model should get more time before fallback is tried.
 - For LM Studio MCP access through the API, LM Studio must have `Allow calling servers from mcp.json` enabled, and that setting requires authentication to be enabled in LM Studio first.
 
 ## Message Types
@@ -67,7 +68,7 @@
 
 - `/help`: show a quick summary of supported message types and commands
 - `/version`: show the running application version and build metadata when available
-- `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, optional fallback, MCP visibility, storage, command policy, debug state, and version
+- `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, MCP visibility, storage, command policy, debug state, and version
 - `/agent swap`: switch the active primary and fallback agent order for the current running process
 - `/reset`: start a fresh active session for the current chat while preserving historical state
 

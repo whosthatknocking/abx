@@ -53,11 +53,12 @@ type MCPServerConfig struct {
 }
 
 type ProviderConfig struct {
-	Provider     string
-	APIKey       string
-	Model        string
-	BaseURL      string
-	Integrations []string
+	Provider              string
+	APIKey                string
+	Model                 string
+	BaseURL               string
+	RequestTimeoutSeconds int
+	Integrations          []string
 }
 
 type SecurityConfig struct {
@@ -147,6 +148,12 @@ func (c *Config) normalize() error {
 	}
 	if c.Command.TimeoutSeconds <= 0 {
 		c.Command.TimeoutSeconds = 60
+	}
+	if c.Agent.Primary.RequestTimeoutSeconds <= 0 {
+		c.Agent.Primary.RequestTimeoutSeconds = 60
+	}
+	if c.Agent.Fallback.RequestTimeoutSeconds <= 0 {
+		c.Agent.Fallback.RequestTimeoutSeconds = 60
 	}
 	if c.Command.PolicyMode == "" {
 		c.Command.PolicyMode = "allowlist"

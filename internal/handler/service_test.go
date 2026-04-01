@@ -364,8 +364,8 @@ func TestConfigCommandIsHandledLocally(t *testing.T) {
 				},
 			},
 			Agent: config.AgentConfig{
-				Primary:  config.ProviderConfig{Provider: "openai", Model: "gpt-4o-mini"},
-				Fallback: config.ProviderConfig{Provider: "openai", Model: "llama3.2", BaseURL: "http://127.0.0.1:1234/v1"},
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "gpt-4o-mini", RequestTimeoutSeconds: 180},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "llama3.2", BaseURL: "http://127.0.0.1:1234/v1", RequestTimeoutSeconds: 45},
 			},
 			MCP: config.MCPConfig{
 				Servers: []config.MCPServerConfig{
@@ -409,10 +409,16 @@ func TestConfigCommandIsHandledLocally(t *testing.T) {
 	if !strings.Contains(msgs.sent[0], "Primary contract: openai-compatible") {
 		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
 	}
+	if !strings.Contains(msgs.sent[0], "Primary request timeout: 180s") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
 	if !strings.Contains(msgs.sent[0], "Fallback model: llama3.2") {
 		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
 	}
 	if !strings.Contains(msgs.sent[0], "Fallback contract: openai-compatible") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Fallback request timeout: 45s") {
 		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
 	}
 	if !strings.Contains(msgs.sent[0], "MCP: enabled (mcp/playwright)") {
@@ -473,6 +479,9 @@ func TestConfigCommandOmitsFallbackAndUsesNormalizedDefaults(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "Primary contract: openai-compatible") {
 		t.Fatalf("expected normalized contract, got %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Primary request timeout: 60s") {
+		t.Fatalf("expected normalized primary timeout, got %q", msgs.sent[0])
 	}
 	if !strings.Contains(msgs.sent[0], "MCP: disabled") {
 		t.Fatalf("expected normalized MCP state, got %q", msgs.sent[0])

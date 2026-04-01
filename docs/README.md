@@ -87,6 +87,7 @@ rpc_port = 7583
 
 - Configuration is file-based only in v1.
 - `agent.primary.model` is required for OpenAI.
+- `agent.primary.request_timeout_seconds` and `agent.fallback.request_timeout_seconds` control how long `abx` waits before treating an agent request as failed and moving to fallback.
 - `[[mcp.servers]]` controls which MCP server names are enabled for local LM Studio-style integrations.
 - For local endpoints with enabled MCP servers, `abx` uses LM Studio's native `/api/v1/chat` route instead of OpenAI-compatible `/v1/chat/completions`.
 - In LM Studio, using servers from `mcp.json` through the API requires the `Allow calling servers from mcp.json` setting to be enabled, and LM Studio requires authentication to be enabled before that setting can be turned on.

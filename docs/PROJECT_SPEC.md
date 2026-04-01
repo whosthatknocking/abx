@@ -83,11 +83,13 @@ rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
 provider = "openai"
 api_key = "sk-..."
 model = "gpt-4o-mini"
+request_timeout_seconds = 180
 
 [agent.fallback]
 provider = "openai"
 base_url = "http://localhost:11434/v1"      # Example: Ollama
 model = "llama3.2"
+request_timeout_seconds = 60
 
 # Optional MCP integrations for local OpenAI-compatible agents
 [mcp]
@@ -316,14 +318,16 @@ All project documentation must live under the `docs/` directory. The repository 
     2. Messaging runtime mode
     3. Primary agent model name
     4. Primary agent contract name
-    5. Optional fallback agent model name
-    6. Optional fallback agent contract name
-    7. MCP enabled/disabled state and enabled MCP server names
-    8. Storage backend name
-    9. Command policy mode
-    10. Command timeout
-    11. Debug enabled/disabled state
-    12. Application version
+    5. Primary agent request timeout
+    6. Optional fallback agent model name
+    7. Optional fallback agent contract name
+    8. Optional fallback agent request timeout
+    9. MCP enabled/disabled state and enabled MCP server names
+    10. Storage backend name
+    11. Command policy mode
+    12. Command timeout
+    13. Debug enabled/disabled state
+    14. Application version
   - `/config` values should be normalized to their effective runtime values where defaults apply.
   - The fallback section is optional and should be omitted entirely when no fallback agent is configured.
   - In v1, the primary and fallback contract names should describe the agent API contract in use, such as `openai-compatible`, rather than exposing internal locality labels.

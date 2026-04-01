@@ -70,3 +70,4 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - The `signal-cli` transport layer still needs production validation against real daemon traffic and broader event parsing coverage
 - The current TOML parser intentionally supports the project’s config shape, not the full TOML language
 - LM Studio MCP behavior still depends on the selected model and LM Studio-side MCP permissions; `abx` can route and instruct correctly, but it cannot force tool use if the local model refuses or lacks capability
+- Agent HTTP timeouts are configurable per provider via `request_timeout_seconds`; longer local-primary timeouts can reduce premature fallback when LM Studio is slow on large prompts or MCP-heavy responses

@@ -16,11 +16,13 @@ rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
 provider = "openai"
 api_key = "sk-..."
 model = "gpt-4o-mini"
+request_timeout_seconds = 180
 
 [agent.fallback]
 provider = "openai"
 base_url = "http://localhost:11434/v1"
 model = "llama3.2"
+request_timeout_seconds = 60
 
 # Optional MCP integrations for local OpenAI-compatible agents
 [mcp]

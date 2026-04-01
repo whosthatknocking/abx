@@ -779,11 +779,13 @@ func (s *Service) configText() string {
 		fmt.Sprintf("Messaging: %s / %s", normalizedMessagingProvider(s.config), normalizedRPCMode(s.config)),
 		fmt.Sprintf("Primary model: %s", normalizedPrimaryModel(s.config)),
 		fmt.Sprintf("Primary contract: %s", normalizedContract(s.config.Agent.Primary.Provider)),
+		fmt.Sprintf("Primary request timeout: %ds", normalizedProviderRequestTimeout(s.config.Agent.Primary)),
 	}
 	if fallbackConfigured(s.config) {
 		lines = append(lines,
 			fmt.Sprintf("Fallback model: %s", strings.TrimSpace(s.config.Agent.Fallback.Model)),
 			fmt.Sprintf("Fallback contract: %s", normalizedContract(s.config.Agent.Fallback.Provider)),
+			fmt.Sprintf("Fallback request timeout: %ds", normalizedProviderRequestTimeout(s.config.Agent.Fallback)),
 		)
 	}
 	lines = append(lines,
@@ -815,6 +817,13 @@ func totalChars(messages []types.Message) int {
 		total += len(msg.Text)
 	}
 	return total
+}
+
+func normalizedProviderRequestTimeout(provider config.ProviderConfig) int {
+	if provider.RequestTimeoutSeconds > 0 {
+		return provider.RequestTimeoutSeconds
+	}
+	return 60
 }
 
 func splitHistoryForSummary(messages []types.Message, recentLimit int) ([]types.Message, []types.Message) {

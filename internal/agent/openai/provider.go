@@ -28,10 +28,14 @@ var _ agent.Provider = (*Provider)(nil)
 // OpenAI-compatible endpoints such as LM Studio. When local MCP integrations
 // are enabled, the provider switches to LM Studio's native chat endpoint.
 func New(cfg config.ProviderConfig) *Provider {
+	timeout := time.Duration(cfg.RequestTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
 	return &Provider{
 		cfg: cfg,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }

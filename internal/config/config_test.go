@@ -22,6 +22,12 @@ rpc_socket = "~/.local/share/signal-cli/rpc.sock"
 provider = "openai"
 api_key = "key"
 model = "gpt-4o-mini"
+request_timeout_seconds = 180
+
+[agent.fallback]
+provider = "openai"
+model = "gpt-5-nano"
+request_timeout_seconds = 45
 
 [[mcp.servers]]
 name = "mcp/playwright"
@@ -86,6 +92,12 @@ description = "test"
 	}
 	if cfg.Agent.Primary.Integrations[0] != "mcp/playwright" {
 		t.Fatalf("unexpected integration %q", cfg.Agent.Primary.Integrations[0])
+	}
+	if cfg.Agent.Primary.RequestTimeoutSeconds != 180 {
+		t.Fatalf("unexpected primary request timeout %d", cfg.Agent.Primary.RequestTimeoutSeconds)
+	}
+	if cfg.Agent.Fallback.RequestTimeoutSeconds != 45 {
+		t.Fatalf("unexpected fallback request timeout %d", cfg.Agent.Fallback.RequestTimeoutSeconds)
 	}
 }
 

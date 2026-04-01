@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/whosthatknocking/abx/internal/agent"
@@ -53,6 +54,7 @@ type Service struct {
 	messenger messenger
 	agent     agent.Provider
 	executor  commandExecutor
+	locks     sync.Map
 }
 
 const (
@@ -81,14 +83,28 @@ func NewService(opts Options) *Service {
 }
 
 func (s *Service) Start(ctx context.Context) error {
-	return s.messenger.Start(ctx, func(msg types.IncomingEnvelope) {
-		if err := s.HandleMessage(ctx, msg); err != nil {
-			s.logger.Printf("handle message conversation=%s sender=%s err=%v", msg.ConversationID, msg.Sender, err)
-		}
+	var wg sync.WaitGroup
+	err := s.messenger.Start(ctx, func(msg types.IncomingEnvelope) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.HandleMessage(ctx, msg); err != nil {
+				s.logger.Printf("handle message conversation=%s sender=%s err=%v", msg.ConversationID, msg.Sender, err)
+			}
+		}()
 	})
+	wg.Wait()
+	return err
 }
 
 func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope) error {
+	lock := s.conversationLock(env.ConversationID)
+	lock.Lock()
+	defer lock.Unlock()
+	return s.handleMessage(ctx, env)
+}
+
+func (s *Service) handleMessage(ctx context.Context, env types.IncomingEnvelope) error {
 	if !s.allowed(env) {
 		s.logger.Printf("untrusted interaction rejected conversation=%s sender=%s chat_type=%s mentioned=%t", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot)
 		s.audit(audit.Record{
@@ -148,6 +164,14 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 		return s.handleControl(ctx, env)
 	}
 	return s.handleConversation(ctx, env, sessionID)
+}
+
+func (s *Service) conversationLock(conversationID string) *sync.Mutex {
+	if conversationID == "" {
+		return &sync.Mutex{}
+	}
+	lock, _ := s.locks.LoadOrStore(conversationID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }
 
 func (s *Service) cancelPendingApprovalOnNonApproval(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {

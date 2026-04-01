@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 )
 
 type fakeMessenger struct {
+	mu   sync.Mutex
 	sent []string
 }
 
@@ -24,7 +26,24 @@ func (m *fakeMessenger) Start(ctx context.Context, handler func(types.IncomingEn
 }
 
 func (m *fakeMessenger) Send(_ context.Context, _ string, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.sent = append(m.sent, text)
+	return nil
+}
+
+type scriptedMessenger struct {
+	envelopes []types.IncomingEnvelope
+}
+
+func (m *scriptedMessenger) Start(_ context.Context, handler func(types.IncomingEnvelope)) error {
+	for _, env := range m.envelopes {
+		handler(env)
+	}
+	return nil
+}
+
+func (m *scriptedMessenger) Send(_ context.Context, _ string, _ string) error {
 	return nil
 }
 
@@ -79,6 +98,174 @@ func (e *fakeExecutor) Check(command string) error {
 		return e.check(command)
 	}
 	return nil
+}
+
+type blockingAgent struct {
+	mu            sync.Mutex
+	firstStarted  chan struct{}
+	secondStarted chan struct{}
+	releaseFirst  chan struct{}
+	firstText     string
+	secondText    string
+}
+
+func (a *blockingAgent) Chat(_ context.Context, messages []types.Message, _ []types.Tool) (types.AgentResponse, error) {
+	latest := ""
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == types.RoleUser {
+			latest = messages[i].Text
+			break
+		}
+	}
+	switch latest {
+	case a.firstText:
+		select {
+		case a.firstStarted <- struct{}{}:
+		default:
+		}
+		<-a.releaseFirst
+	case a.secondText:
+		select {
+		case a.secondStarted <- struct{}{}:
+		default:
+		}
+	}
+	return types.AgentResponse{Text: "ok"}, nil
+}
+
+func (a *blockingAgent) Check(_ context.Context) error {
+	return nil
+}
+
+func TestStartProcessesDifferentConversationsConcurrently(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "conversation-a",
+		secondText:    "conversation-b",
+	}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo: inmemory.New(),
+		Messenger: &scriptedMessenger{
+			envelopes: []types.IncomingEnvelope{
+				{ConversationID: "direct:+1555", Sender: "+1555", ChatType: types.ChatTypeDirect, Text: "conversation-a"},
+				{ConversationID: "direct:+1666", Sender: "+1555", ChatType: types.ChatTypeDirect, Text: "conversation-b"},
+			},
+		},
+		Agent:    agentSpy,
+		Executor: &fakeExecutor{},
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.Start(context.Background())
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first conversation to start")
+	}
+
+	select {
+	case <-agentSpy.secondStarted:
+		// expected: different conversation should proceed while first is blocked
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected second conversation to proceed concurrently")
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("service start returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected service start to finish after unblocking first conversation")
+	}
+}
+
+func TestHandleMessageSerializesSameConversation(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "first",
+		secondText:    "second",
+	}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      inmemory.New(),
+		Messenger: &fakeMessenger{},
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	doneFirst := make(chan error, 1)
+	go func() {
+		doneFirst <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "first",
+		})
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first message to start")
+	}
+
+	doneSecond := make(chan error, 1)
+	go func() {
+		doneSecond <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "second",
+		})
+	}()
+
+	select {
+	case <-agentSpy.secondStarted:
+		t.Fatal("did not expect second message in same conversation to start before first completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-doneFirst:
+		if err != nil {
+			t.Fatalf("first handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected first message to finish after release")
+	}
+
+	select {
+	case <-agentSpy.secondStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected second message to start after first completed")
+	}
+
+	select {
+	case err := <-doneSecond:
+		if err != nil {
+			t.Fatalf("second handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected second message to finish")
+	}
 }
 
 func TestConfigCommandIsHandledLocally(t *testing.T) {

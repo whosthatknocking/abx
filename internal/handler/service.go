@@ -63,6 +63,7 @@ const (
 	summaryHistoryLimit = 100
 	summaryMaxChars     = 2000
 	commandContextChars = 1200
+	personaMaxChars     = 500
 )
 
 func NewService(opts Options) *Service {
@@ -194,6 +195,8 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 			return true
 		}
 		return fields[1] == "list" || fields[1] == "status"
+	case "/persona":
+		return len(fields) <= 1
 	default:
 		return false
 	}
@@ -280,6 +283,10 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	persona, err := s.repo.GetActiveSessionPersona(ctx, env.ConversationID)
+	if err != nil {
+		return err
+	}
 	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
 	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
 	if desiredSummary != summary {
@@ -288,7 +295,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		}
 		summary = desiredSummary
 	}
-	agentMessages := prependConversationSystemPrompt(prependSummaryMessage(recentHistory, summary))
+	agentMessages := prependConversationSystemPrompt(prependPersonaMessage(prependSummaryMessage(recentHistory, summary), persona))
 	s.logger.Printf(
 		"agent interaction start conversation=%s session=%s sender=%s history_messages=%d history_chars=%d summary_chars=%d input_chars=%d",
 		env.ConversationID,
@@ -581,6 +588,47 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 		default:
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Unknown agents command.")
 		}
+	case "/persona":
+		if len(fields) == 1 {
+			persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(persona) == "" {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
+			}
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
+		}
+		if fields[1] == "reset" {
+			if err := s.repo.SaveSessionPersona(ctx, env.ConversationID, sessionID, ""); err != nil {
+				return err
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/persona reset",
+			})
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona cleared for this session.")
+		}
+		persona := normalizePersona(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(effectiveIncomingText(env)), "/persona")))
+		if persona == "" {
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /persona <instruction>\nUse `/persona reset` to clear it.")
+		}
+		if err := s.repo.SaveSessionPersona(ctx, env.ConversationID, sessionID, persona); err != nil {
+			return err
+		}
+		s.audit(audit.Record{
+			Event:          "control_command",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "control",
+			Decision:       "/persona set",
+		})
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Persona updated for this session.")
 	case "/reset":
 		active, err := s.repo.GetActivePendingApproval(ctx, env.ConversationID)
 		if err == nil && active != nil {
@@ -647,6 +695,27 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 			Decision:       "/config",
 		})
 		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.configText())
+	case "/persona":
+		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
+		if len(fields) > 1 {
+			return false, nil
+		}
+		s.audit(audit.Record{
+			Event:          "control_command",
+			ConversationID: env.ConversationID,
+			SessionID:      sessionID,
+			Sender:         env.Sender,
+			MessageType:    "control",
+			Decision:       "/persona",
+		})
+		persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(persona) == "" {
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "No persona is set for this session.")
+		}
+		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current persona:\n"+strings.TrimSpace(persona))
 	case "/agents":
 		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
 		if len(fields) < 2 {
@@ -810,6 +879,7 @@ func helpText() string {
 		"- /help",
 		"- /version",
 		"- /config",
+		"- /persona",
 		"- /agents list",
 		"- /agents status",
 		"- /agents switch",
@@ -940,6 +1010,20 @@ func prependSummaryMessage(messages []types.Message, summary string) []types.Mes
 	return out
 }
 
+func prependPersonaMessage(messages []types.Message, persona string) []types.Message {
+	persona = strings.TrimSpace(persona)
+	if persona == "" {
+		return append([]types.Message(nil), messages...)
+	}
+	out := make([]types.Message, 0, len(messages)+1)
+	out = append(out, types.Message{
+		Role: types.RoleSystem,
+		Text: "Persona:\n" + persona,
+	})
+	out = append(out, messages...)
+	return out
+}
+
 func prependConversationSystemPrompt(messages []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(messages)+1)
 	out = append(out, types.Message{
@@ -998,6 +1082,14 @@ func roleLabel(role types.Role) string {
 
 func compactWhitespace(text string) string {
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func normalizePersona(text string) string {
+	text = compactWhitespace(text)
+	if len(text) > personaMaxChars {
+		text = strings.TrimSpace(text[:personaMaxChars])
+	}
+	return text
 }
 
 func (s *Service) formatAgentReply(response types.AgentResponse) string {

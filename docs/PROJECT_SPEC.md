@@ -302,14 +302,22 @@ All project documentation must live under the `docs/` directory. The repository 
   - After restart, `abx` must be able to resume conversation handling from local persisted state.
 
 - **Built-in Control Commands**:
-  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, and `/reset`.
+  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, `/persona`, `/agents list`, `/agents status`, `/agents switch`, and `/reset`.
   - These commands are handled by the application directly and do not require agent inference to route them.
   - `/help` returns a concise summary of the supported message types and built-in commands.
   - `/version` returns the running application version and, if available, build metadata.
   - `/config` returns a safe normalized runtime summary of the active messaging, agent, MCP, storage, and command-policy configuration.
+  - `/persona` manages a session-scoped persona instruction that is stored locally and prepended to future agent requests for the active session.
+  - `/persona` with no argument returns the currently active session persona, if any.
+  - `/persona <instruction>` stores or replaces the active session persona for that chat session.
+  - `/persona reset` clears the active session persona.
+  - `/agents list` returns the configured primary agent and, when present, the configured fallback agent.
+  - `/agents status` checks whether each configured agent is reachable and returns a bounded live status summary.
+  - `/agents switch` swaps the active primary and fallback agent order for the running process.
   - `/reset` performs a soft reset of the active conversation session for the current chat context.
   - A soft reset must preserve historical records for audit and diagnostics while starting a fresh active conversation context for future agent requests.
   - `/reset` must clear any active pending approval for the current conversation context and archive or detach the previous active summary/history from the new active session.
+  - `/reset` must also clear any active session persona by virtue of creating a new active session with fresh session-scoped state.
   - After `/reset`, the next trusted message in that chat must be handled as the start of a new active conversation session.
   - `/reset` should return a confirmation message such as `Conversation context reset for this chat.`
   - `/config` must never expose secrets such as API keys, tokens, or full sensitive file paths.

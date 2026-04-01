@@ -1005,6 +1005,129 @@ func TestVersionCommandOmitsBuildMetadataWhenUnavailable(t *testing.T) {
 	}
 }
 
+func TestPersonaSetShowAndReset(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/persona Act as a witty comedian assistant",
+	}); err != nil {
+		t.Fatalf("handle /persona set: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Persona updated for this session.") {
+		t.Fatalf("unexpected /persona set response: %q", msgs.sent[0])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/persona",
+	}); err != nil {
+		t.Fatalf("handle /persona show: %v", err)
+	}
+	if !strings.Contains(msgs.sent[1], "Current persona:\nAct as a witty comedian assistant") {
+		t.Fatalf("unexpected /persona show response: %q", msgs.sent[1])
+	}
+
+	persona, err := repo.GetActiveSessionPersona(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session persona: %v", err)
+	}
+	if persona != "Act as a witty comedian assistant" {
+		t.Fatalf("unexpected stored persona: %q", persona)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/persona reset",
+	}); err != nil {
+		t.Fatalf("handle /persona reset: %v", err)
+	}
+	if !strings.Contains(msgs.sent[2], "Persona cleared for this session.") {
+		t.Fatalf("unexpected /persona reset response: %q", msgs.sent[2])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/persona",
+	}); err != nil {
+		t.Fatalf("handle /persona after reset: %v", err)
+	}
+	if !strings.Contains(msgs.sent[3], "No persona is set for this session.") {
+		t.Fatalf("unexpected /persona empty response: %q", msgs.sent[3])
+	}
+}
+
+func TestPersonaIsPrependedToConversationPrompt(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "hello"}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session id: %v", err)
+	}
+	if err := repo.SaveSessionPersona(ctx, conversationID, sessionID, "Act as a witty comedian assistant"); err != nil {
+		t.Fatalf("save persona: %v", err)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	}); err != nil {
+		t.Fatalf("handle conversational message: %v", err)
+	}
+
+	if len(agentSpy.lastMessages) < 2 {
+		t.Fatalf("expected persona prompt in agent messages, got %#v", agentSpy.lastMessages)
+	}
+	found := false
+	for _, msg := range agentSpy.lastMessages {
+		if msg.Role == types.RoleSystem && strings.Contains(msg.Text, "Persona:\nAct as a witty comedian assistant") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected persona system message, got %#v", agentSpy.lastMessages)
+	}
+}
+
 func TestHelpCommandSummarizesAvailableTypes(t *testing.T) {
 	repo := inmemory.New()
 	msgs := &fakeMessenger{}

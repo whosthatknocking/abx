@@ -14,6 +14,9 @@ type Repository interface {
 	SaveConversationSummary(ctx context.Context, conversationID, sessionID, summary string) error
 	GetConversationSummary(ctx context.Context, conversationID, sessionID string) (string, error)
 	GetActiveConversationSummary(ctx context.Context, conversationID string) (string, error)
+	SaveSessionPersona(ctx context.Context, conversationID, sessionID, persona string) error
+	GetSessionPersona(ctx context.Context, conversationID, sessionID string) (string, error)
+	GetActiveSessionPersona(ctx context.Context, conversationID string) (string, error)
 	RotateConversationSession(ctx context.Context, conversationID string) (string, error)
 	SavePendingApproval(ctx context.Context, conversationID, sessionID string, approval types.PendingApproval) error
 	GetPendingApproval(ctx context.Context, conversationID, requestID string) (*types.PendingApproval, error)

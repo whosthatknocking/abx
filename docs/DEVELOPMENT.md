@@ -72,6 +72,14 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 
 `abx` uses the checked-in `VERSION` file as the default build version source. GitHub releases are published by pushing a matching tag such as `v0.1.0`.
 
+### Release Steps
+
+1. Update `VERSION` to the release number, for example `0.1.0`.
+2. Commit the version bump and push the branch.
+3. Create an annotated tag with a leading `v`, for example `git tag -a v0.1.0 -m "Release v0.1.0"`.
+4. Push the tag with `git push origin v0.1.0`.
+5. GitHub Actions will verify the tag matches `VERSION`, run tests, build release artifacts, and publish the GitHub release.
+
 ## Known Gaps
 
 - The `signal-cli` transport layer still needs production validation against real daemon traffic and broader event parsing coverage

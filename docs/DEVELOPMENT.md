@@ -68,6 +68,10 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - `make fmt`
 - `make release-artifacts`
 
+## Versioning
+
+`abx` uses the checked-in `VERSION` file as the default build version source. GitHub releases are published by pushing a matching tag such as `v0.1.0`.
+
 ## Known Gaps
 
 - The `signal-cli` transport layer still needs production validation against real daemon traffic and broader event parsing coverage

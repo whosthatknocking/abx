@@ -101,6 +101,110 @@ description = "test"
 	}
 }
 
+func TestDecodeProviderThinkingFlatKeys(t *testing.T) {
+	input := `
+[agent.primary]
+provider = "openai"
+model = "qwen/qwen3-8b"
+thinking_default = "enabled"
+thinking_parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
+thinking_enable_suffix = "/think"
+thinking_disable_suffix = "/no_think"
+
+[security]
+trusted_numbers = ["+1"]
+
+[database]
+type = "inmemory"
+dsn = "ignored"
+
+[command]
+work_dir = "~/abx/workspace"
+
+[[command.policy.rules]]
+id = "allow-pwd"
+enabled = true
+action = "allow"
+match_type = "exact"
+pattern = "pwd"
+description = "test"
+`
+
+	tree, err := parseTOML(input)
+	if err != nil {
+		t.Fatalf("parse toml: %v", err)
+	}
+	cfg, err := decodeConfig(tree)
+	if err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if err := cfg.normalize(); err != nil {
+		t.Fatalf("normalize config: %v", err)
+	}
+	if cfg.Agent.Primary.Thinking.DefaultMode != "enabled" {
+		t.Fatalf("unexpected thinking default %q", cfg.Agent.Primary.Thinking.DefaultMode)
+	}
+	if cfg.Agent.Primary.Thinking.ParameterPath != "extra_body.chat_template_kwargs.enable_thinking" {
+		t.Fatalf("unexpected thinking parameter path %q", cfg.Agent.Primary.Thinking.ParameterPath)
+	}
+	if cfg.Agent.Primary.Thinking.EnableSuffix != "/think" {
+		t.Fatalf("unexpected thinking enable suffix %q", cfg.Agent.Primary.Thinking.EnableSuffix)
+	}
+	if cfg.Agent.Primary.Thinking.DisableSuffix != "/no_think" {
+		t.Fatalf("unexpected thinking disable suffix %q", cfg.Agent.Primary.Thinking.DisableSuffix)
+	}
+}
+
+func TestDecodeProviderThinkingNestedKeysRemainSupported(t *testing.T) {
+	input := `
+[agent.primary]
+provider = "openai"
+model = "qwen/qwen3-8b"
+
+[agent.primary.thinking]
+default = "disabled"
+parameter_path = "extra_body.enable_thinking"
+enable_suffix = "/think"
+disable_suffix = "/no_think"
+
+[security]
+trusted_numbers = ["+1"]
+
+[database]
+type = "inmemory"
+dsn = "ignored"
+
+[command]
+work_dir = "~/abx/workspace"
+
+[[command.policy.rules]]
+id = "allow-pwd"
+enabled = true
+action = "allow"
+match_type = "exact"
+pattern = "pwd"
+description = "test"
+`
+
+	tree, err := parseTOML(input)
+	if err != nil {
+		t.Fatalf("parse toml: %v", err)
+	}
+	cfg, err := decodeConfig(tree)
+	if err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if err := cfg.normalize(); err != nil {
+		t.Fatalf("normalize config: %v", err)
+	}
+	if cfg.Agent.Primary.Thinking.DefaultMode != "disabled" {
+		t.Fatalf("unexpected thinking default %q", cfg.Agent.Primary.Thinking.DefaultMode)
+	}
+	if cfg.Agent.Primary.Thinking.ParameterPath != "extra_body.enable_thinking" {
+		t.Fatalf("unexpected thinking parameter path %q", cfg.Agent.Primary.Thinking.ParameterPath)
+	}
+}
+
 func TestLoadCreatesDefaultConfigDirectory(t *testing.T) {
 	tmpHome := t.TempDir()
 	originalHome, hadHome := os.LookupEnv("HOME")

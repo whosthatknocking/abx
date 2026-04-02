@@ -23,11 +23,10 @@ request_timeout_seconds = 180
 # OpenAI-compatible hard switch, and /think or /nothink for the soft switch.
 # If abx is using LM Studio's native /api/v1/chat path for MCP integrations,
 # use the suffixes and leave parameter_path unset.
-#[agent.primary.thinking]
-#default = "enabled"
-#parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
-#enable_suffix = "/think"
-#disable_suffix = "/no_think"
+#thinking_default = "enabled"
+#thinking_parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
+#thinking_enable_suffix = "/think"
+#thinking_disable_suffix = "/no_think"
 
 [agent.fallback]
 provider = "openai"

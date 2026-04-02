@@ -77,6 +77,22 @@ func decodeConfig(tree map[string]any) (*Config, error) {
 
 func decodeProvider(m map[string]any) ProviderConfig {
 	thinking := childMap(m, "thinking")
+	defaultMode := stringValue(m, "thinking_default")
+	if defaultMode == "" {
+		defaultMode = stringValue(thinking, "default")
+	}
+	parameterPath := stringValue(m, "thinking_parameter_path")
+	if parameterPath == "" {
+		parameterPath = stringValue(thinking, "parameter_path")
+	}
+	enableSuffix := stringValue(m, "thinking_enable_suffix")
+	if enableSuffix == "" {
+		enableSuffix = stringValue(thinking, "enable_suffix")
+	}
+	disableSuffix := stringValue(m, "thinking_disable_suffix")
+	if disableSuffix == "" {
+		disableSuffix = stringValue(thinking, "disable_suffix")
+	}
 	return ProviderConfig{
 		Provider:              stringValue(m, "provider"),
 		APIKey:                stringValue(m, "api_key"),
@@ -84,10 +100,10 @@ func decodeProvider(m map[string]any) ProviderConfig {
 		BaseURL:               stringValue(m, "base_url"),
 		RequestTimeoutSeconds: intValue(m, "request_timeout_seconds"),
 		Thinking: ThinkingConfig{
-			DefaultMode:   stringValue(thinking, "default"),
-			ParameterPath: stringValue(thinking, "parameter_path"),
-			EnableSuffix:  stringValue(thinking, "enable_suffix"),
-			DisableSuffix: stringValue(thinking, "disable_suffix"),
+			DefaultMode:   defaultMode,
+			ParameterPath: parameterPath,
+			EnableSuffix:  enableSuffix,
+			DisableSuffix: disableSuffix,
 		},
 	}
 }

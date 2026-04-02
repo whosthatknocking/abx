@@ -29,6 +29,7 @@ type sessionState struct {
 	Summary          string
 	Persona          string
 	Format           string
+	ThinkingMode     string
 	FallbackDisabled bool
 }
 
@@ -167,6 +168,37 @@ func (r *Repository) GetActiveSessionFormat(ctx context.Context, conversationID 
 		return "", err
 	}
 	return r.GetSessionFormat(ctx, conversationID, sessionID)
+}
+
+func (r *Repository) SaveSessionThinkingMode(_ context.Context, conversationID, sessionID, mode string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	conv := r.ensureConversation(conversationID)
+	session := r.ensureSession(conv, sessionID)
+	session.ThinkingMode = mode
+	return nil
+}
+
+func (r *Repository) GetSessionThinkingMode(_ context.Context, conversationID, sessionID string) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	conv, ok := r.conversations[conversationID]
+	if !ok {
+		return "", nil
+	}
+	session, ok := conv.Sessions[sessionID]
+	if !ok {
+		return "", nil
+	}
+	return session.ThinkingMode, nil
+}
+
+func (r *Repository) GetActiveSessionThinkingMode(ctx context.Context, conversationID string) (string, error) {
+	sessionID, err := r.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		return "", err
+	}
+	return r.GetSessionThinkingMode(ctx, conversationID, sessionID)
 }
 
 func (r *Repository) SaveSessionFallbackDisabled(_ context.Context, conversationID, sessionID string, disabled bool) error {

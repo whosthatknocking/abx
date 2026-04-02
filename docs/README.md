@@ -24,7 +24,7 @@
 - Built-in slash commands and `/run` behave the same in direct and group chat once the bot is explicitly mentioned in the group
 - Conversational agent responses from local context only
 - Automatic conversation summaries for older context in longer chats
-- Built-in control commands: `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents format`, `/agents fallback`, `/agents switch`, `/reset`
+- Built-in control commands: `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents reload`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, `/reset`
 - Unified `/run <command-or-intent>` flow for direct commands or agent-recommended commands
 - Deny-by-default shell execution with explicit allow rules
 - Request-bound approval tokens for command execution
@@ -89,6 +89,7 @@ rpc_port = 7583
 - Configuration is file-based only in v1.
 - `agent.primary.model` is required for OpenAI.
 - `agent.primary.request_timeout_seconds` and `agent.fallback.request_timeout_seconds` control how long `abx` waits before treating an agent request as failed and moving to fallback.
+- Agents can optionally declare thinking-control settings under `[agent.<name>.thinking]`, including a default mode plus a generic request-body path or message suffixes for models such as Qwen.
 - `[[mcp.servers]]` controls which MCP server names are enabled for local LM Studio-style integrations.
 - For local endpoints with enabled MCP servers, `abx` uses LM Studio's native `/api/v1/chat` route instead of OpenAI-compatible `/v1/chat/completions`.
 - In LM Studio, using servers from `mcp.json` through the API requires the `Allow calling servers from mcp.json` setting to be enabled, and LM Studio requires authentication to be enabled before that setting can be turned on.
@@ -96,7 +97,7 @@ rpc_port = 7583
 - Shell commands are blocked unless they match an enabled allow rule.
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.
 - `/version` includes build metadata when it is available in the binary.
-- `/config` reports normalized, non-secret runtime settings including messaging mode, agent contract/model, MCP visibility, storage, command policy, debug state, and version.
+- `/config` reports normalized, non-secret runtime settings including messaging mode, agent contract/model, MCP visibility, storage, command policy, thinking-control state, debug state, and version.
 
 ## Notes
 

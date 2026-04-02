@@ -18,6 +18,17 @@ api_key = "sk-..."
 model = "gpt-4o-mini"
 request_timeout_seconds = 180
 
+# Example thinking control for Qwen served through an OpenAI-compatible API.
+# Official Qwen examples show chat_template_kwargs.enable_thinking for the
+# OpenAI-compatible hard switch, and /think or /nothink for the soft switch.
+# If abx is using LM Studio's native /api/v1/chat path for MCP integrations,
+# use the suffixes and leave parameter_path unset.
+#[agent.primary.thinking]
+#default = "enabled"
+#parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
+#enable_suffix = "/think"
+#disable_suffix = "/no_think"
+
 [agent.fallback]
 provider = "openai"
 base_url = "http://localhost:11434/v1"

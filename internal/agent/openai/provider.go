@@ -42,7 +42,11 @@ func New(cfg config.ProviderConfig) *Provider {
 }
 
 func (p *Provider) Chat(ctx context.Context, messages []types.Message, _ []types.Tool) (types.AgentResponse, error) {
-	body := p.chatRequestBody(messages)
+	return p.ChatWithOptions(ctx, messages, nil, types.AgentOptions{})
+}
+
+func (p *Provider) ChatWithOptions(ctx context.Context, messages []types.Message, _ []types.Tool, options types.AgentOptions) (types.AgentResponse, error) {
+	body := p.chatRequestBody(messages, options)
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return types.AgentResponse{}, err
@@ -256,22 +260,25 @@ func (p *Provider) nativeLMStudioBaseURL() string {
 	return baseURL + "/api/v1"
 }
 
-func (p *Provider) chatRequestBody(messages []types.Message) map[string]any {
+func (p *Provider) chatRequestBody(messages []types.Message, options types.AgentOptions) map[string]any {
+	messages = p.applyThinkingMessages(messages, options)
 	if p.usesNativeLMStudioChat() {
 		// LM Studio's native MCP-aware endpoint accepts a single transcript string
 		// plus integrations, not OpenAI-style role/content messages.
 		transcriptMessages := p.withMCPSystemPrompt(messages)
-		return map[string]any{
+		body := map[string]any{
 			"model":        p.cfg.Model,
 			"input":        toLMStudioInput(transcriptMessages),
 			"integrations": append([]string(nil), p.cfg.Integrations...),
 			"store":        false,
 		}
+		return body
 	}
 	body := map[string]any{
 		"model":    p.cfg.Model,
 		"messages": toChatMessages(messages),
 	}
+	p.applyThinkingRequestBody(body, options)
 	return body
 }
 
@@ -390,6 +397,90 @@ func firstIntegrationName(integrations []string) string {
 		}
 	}
 	return ""
+}
+
+func (p *Provider) applyThinkingMessages(messages []types.Message, options types.AgentOptions) []types.Message {
+	suffix := p.thinkingSuffix(options)
+	if suffix == "" {
+		return append([]types.Message(nil), messages...)
+	}
+	out := append([]types.Message(nil), messages...)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role != types.RoleUser {
+			continue
+		}
+		text := strings.TrimSpace(out[i].Text)
+		if text == "" {
+			text = suffix
+		} else if !strings.HasSuffix(text, suffix) {
+			text += "\n" + suffix
+		}
+		out[i].Text = text
+		return out
+	}
+	out = append(out, types.Message{Role: types.RoleUser, Text: suffix})
+	return out
+}
+
+func (p *Provider) applyThinkingRequestBody(body map[string]any, options types.AgentOptions) {
+	path := strings.TrimSpace(p.cfg.Thinking.ParameterPath)
+	if path == "" {
+		return
+	}
+	value, ok := p.thinkingValue(options)
+	if !ok {
+		return
+	}
+	setNestedValue(body, strings.Split(path, "."), value)
+}
+
+func (p *Provider) thinkingSuffix(options types.AgentOptions) string {
+	value, ok := p.thinkingValue(options)
+	if !ok {
+		return ""
+	}
+	if value {
+		return strings.TrimSpace(p.cfg.Thinking.EnableSuffix)
+	}
+	return strings.TrimSpace(p.cfg.Thinking.DisableSuffix)
+}
+
+func (p *Provider) thinkingValue(options types.AgentOptions) (bool, bool) {
+	if options.Thinking != nil {
+		return *options.Thinking, true
+	}
+	switch p.cfg.Thinking.DefaultMode {
+	case "enabled":
+		return true, true
+	case "disabled":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func setNestedValue(root map[string]any, path []string, value any) {
+	if len(path) == 0 {
+		return
+	}
+	current := root
+	for _, part := range path[:len(path)-1] {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return
+		}
+		next, ok := current[part].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			current[part] = next
+		}
+		current = next
+	}
+	last := strings.TrimSpace(path[len(path)-1])
+	if last == "" {
+		return
+	}
+	current[last] = value
 }
 
 func endpointClass(baseURL string) string {

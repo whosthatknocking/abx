@@ -59,6 +59,14 @@ type ProviderConfig struct {
 	BaseURL               string
 	RequestTimeoutSeconds int
 	Integrations          []string
+	Thinking              ThinkingConfig
+}
+
+type ThinkingConfig struct {
+	DefaultMode   string
+	ParameterPath string
+	EnableSuffix  string
+	DisableSuffix string
 }
 
 type SecurityConfig struct {
@@ -169,6 +177,8 @@ func (c *Config) normalize() error {
 	}
 	c.Agent.Primary.Integrations = c.MCP.EnabledServerNames()
 	c.Agent.Fallback.Integrations = c.MCP.EnabledServerNames()
+	c.Agent.Primary.Thinking.normalize()
+	c.Agent.Fallback.Thinking.normalize()
 
 	if c.Agent.Primary.Provider == "openai" && c.Agent.Primary.Model == "" {
 		return errors.New("agent.primary.model is required for openai")
@@ -205,4 +215,22 @@ func (c MCPConfig) EnabledServerNames() []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+func (c *ThinkingConfig) normalize() {
+	c.DefaultMode = normalizeThinkingMode(c.DefaultMode)
+	c.ParameterPath = strings.TrimSpace(c.ParameterPath)
+	c.EnableSuffix = strings.TrimSpace(c.EnableSuffix)
+	c.DisableSuffix = strings.TrimSpace(c.DisableSuffix)
+}
+
+func normalizeThinkingMode(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "enabled", "enable", "on", "true":
+		return "enabled"
+	case "disabled", "disable", "off", "false":
+		return "disabled"
+	default:
+		return ""
+	}
 }

@@ -20,6 +20,9 @@ type Repository interface {
 	SaveSessionFormat(ctx context.Context, conversationID, sessionID, format string) error
 	GetSessionFormat(ctx context.Context, conversationID, sessionID string) (string, error)
 	GetActiveSessionFormat(ctx context.Context, conversationID string) (string, error)
+	SaveSessionThinkingMode(ctx context.Context, conversationID, sessionID, mode string) error
+	GetSessionThinkingMode(ctx context.Context, conversationID, sessionID string) (string, error)
+	GetActiveSessionThinkingMode(ctx context.Context, conversationID string) (string, error)
 	SaveSessionFallbackDisabled(ctx context.Context, conversationID, sessionID string, disabled bool) error
 	GetSessionFallbackDisabled(ctx context.Context, conversationID, sessionID string) (bool, error)
 	GetActiveSessionFallbackDisabled(ctx context.Context, conversationID string) (bool, error)

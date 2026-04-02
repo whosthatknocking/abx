@@ -51,16 +51,9 @@ func main() {
 		log.Fatalf("init repository: %v", err)
 	}
 
-	cmdExecutor, err := executor.New(cfg.Command)
+	runtimeAgent, cmdExecutor, err := buildRuntime(cfg)
 	if err != nil {
-		log.Fatalf("init command executor: %v", err)
-	}
-
-	primaryAgent := openai.New(cfg.Agent.Primary)
-	var runtimeAgent agent.Provider = primaryAgent
-	if cfg.Agent.Fallback.Provider != "" {
-		fallbackAgent := openai.New(cfg.Agent.Fallback)
-		runtimeAgent = agent.NewFallback(primaryAgent, fallbackAgent)
+		log.Fatalf("init runtime: %v", err)
 	}
 	messenger := signalcli.New(cfg.Messaging.SignalCLI, logger)
 	svc := handler.NewService(handler.Options{
@@ -73,6 +66,29 @@ func main() {
 		Messenger: messenger,
 		Agent:     runtimeAgent,
 		Executor:  cmdExecutor,
+		Reload: func(ctx context.Context) (*handler.ReloadAgents, error) {
+			nextCfg, err := config.Load(configPath)
+			if err != nil {
+				return nil, err
+			}
+			nextAgent, _, err := buildRuntime(nextCfg)
+			if err != nil {
+				return nil, err
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			if err := nextAgent.Check(checkCtx); err != nil {
+				return nil, fmt.Errorf("check reloaded agents: %w", err)
+			}
+			updatedCfg := *cfg
+			updatedCfg.Agent = nextCfg.Agent
+			updatedCfg.MCP = nextCfg.MCP
+			cfg = &updatedCfg
+			return &handler.ReloadAgents{
+				Config: cfg,
+				Agent:  nextAgent,
+			}, nil
+		},
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,4 +149,18 @@ func newRepository(cfg *config.Config) (repository.Repository, error) {
 	default:
 		return nil, fmt.Errorf("unsupported database.type %q", cfg.Database.Type)
 	}
+}
+
+func buildRuntime(cfg *config.Config) (agent.Provider, *executor.Executor, error) {
+	cmdExecutor, err := executor.New(cfg.Command)
+	if err != nil {
+		return nil, nil, err
+	}
+	primaryAgent := openai.New(cfg.Agent.Primary)
+	var runtimeAgent agent.Provider = primaryAgent
+	if cfg.Agent.Fallback.Provider != "" {
+		fallbackAgent := openai.New(cfg.Agent.Fallback)
+		runtimeAgent = agent.NewFallback(primaryAgent, fallbackAgent)
+	}
+	return runtimeAgent, cmdExecutor, nil
 }

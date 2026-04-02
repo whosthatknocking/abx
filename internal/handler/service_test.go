@@ -61,10 +61,16 @@ type fakeAgent struct {
 	totalTokens   int
 	timeToFirst   float64
 	lastMessages  []types.Message
+	lastOptions   types.AgentOptions
 }
 
 func (a *fakeAgent) Chat(_ context.Context, messages []types.Message, _ []types.Tool) (types.AgentResponse, error) {
+	return a.ChatWithOptions(context.Background(), messages, nil, types.AgentOptions{})
+}
+
+func (a *fakeAgent) ChatWithOptions(_ context.Context, messages []types.Message, _ []types.Tool, options types.AgentOptions) (types.AgentResponse, error) {
 	a.lastMessages = append([]types.Message(nil), messages...)
+	a.lastOptions = options
 	return types.AgentResponse{
 		Text:          a.response,
 		Provider:      a.provider,
@@ -340,6 +346,187 @@ func TestReadOnlyControlBypassesBlockedAgentInSameConversation(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "Version: test") {
 		t.Fatalf("unexpected /config response: %q", got[0])
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-doneFirst:
+		if err != nil {
+			t.Fatalf("first handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected blocked conversation to finish after release")
+	}
+}
+
+func TestFallbackDisableBypassesBlockedAgentInSameConversation(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "first",
+		secondText:    "/agents fallback disable",
+	}
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary:  config.ProviderConfig{Provider: "openai", Model: "primary"},
+				Fallback: config.ProviderConfig{Provider: "openai", Model: "fallback"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      inmemory.New(),
+		Messenger: msgs,
+		Agent:     agent.NewFallback(agentSpy, &fakeAgent{response: "fallback"}),
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	doneFirst := make(chan error, 1)
+	go func() {
+		doneFirst <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "first",
+		})
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first message to start")
+	}
+
+	doneDisable := make(chan error, 1)
+	go func() {
+		doneDisable <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "/agents fallback disable",
+		})
+	}()
+
+	select {
+	case err := <-doneDisable:
+		if err != nil {
+			t.Fatalf("fallback disable returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected /agents fallback disable to complete while agent request is still blocked")
+	}
+
+	select {
+	case <-agentSpy.secondStarted:
+		t.Fatal("did not expect /agents fallback disable to call the agent")
+	default:
+	}
+
+	msgs.mu.Lock()
+	got := append([]string(nil), msgs.sent...)
+	msgs.mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("expected one immediate control response, got %d", len(got))
+	}
+	if !strings.Contains(got[0], "Fallback disabled for this session.") {
+		t.Fatalf("unexpected /agents fallback disable response: %q", got[0])
+	}
+
+	close(agentSpy.releaseFirst)
+	select {
+	case err := <-doneFirst:
+		if err != nil {
+			t.Fatalf("first handle returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected blocked conversation to finish after release")
+	}
+}
+
+func TestAgentsReloadBypassesBlockedAgentInSameConversation(t *testing.T) {
+	agentSpy := &blockingAgent{
+		firstStarted:  make(chan struct{}, 1),
+		secondStarted: make(chan struct{}, 1),
+		releaseFirst:  make(chan struct{}),
+		firstText:     "first",
+		secondText:    "/agents reload",
+	}
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{Provider: "openai", Model: "before"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      inmemory.New(),
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+		Reload: func(context.Context) (*ReloadAgents, error) {
+			return &ReloadAgents{
+				Config: &config.Config{
+					Agent: config.AgentConfig{
+						Primary: config.ProviderConfig{Provider: "openai", Model: "after"},
+					},
+					Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+				},
+				Agent: &fakeAgent{response: "after"},
+			}, nil
+		},
+	})
+
+	ctx := context.Background()
+	doneFirst := make(chan error, 1)
+	go func() {
+		doneFirst <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "first",
+		})
+	}()
+
+	select {
+	case <-agentSpy.firstStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected first message to start")
+	}
+
+	doneReload := make(chan error, 1)
+	go func() {
+		doneReload <- svc.HandleMessage(ctx, types.IncomingEnvelope{
+			ConversationID: "direct:+1555",
+			Sender:         "+1555",
+			ChatType:       types.ChatTypeDirect,
+			Text:           "/agents reload",
+		})
+	}()
+
+	select {
+	case err := <-doneReload:
+		if err != nil {
+			t.Fatalf("agents reload returned error: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected /agents reload to complete while agent request is still blocked")
+	}
+
+	select {
+	case <-agentSpy.secondStarted:
+		t.Fatal("did not expect /agents reload to call the blocked agent")
+	default:
+	}
+
+	msgs.mu.Lock()
+	got := append([]string(nil), msgs.sent...)
+	msgs.mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "Agents reloaded.") {
+		t.Fatalf("unexpected /agents reload response: %#v", got)
 	}
 
 	close(agentSpy.releaseFirst)
@@ -693,7 +880,7 @@ func TestAgentsUsageBypassesBlockedAgentInSameConversation(t *testing.T) {
 	msgs.mu.Lock()
 	got := append([]string(nil), msgs.sent...)
 	msgs.mu.Unlock()
-	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|switch|persona|format|fallback>") {
+	if len(got) != 1 || !strings.Contains(got[0], "Usage: /agents <list|status|reload|switch|persona|format|thinking|fallback>") {
 		t.Fatalf("unexpected /agents usage response: %#v", got)
 	}
 
@@ -829,6 +1016,99 @@ func TestAgentsSwitchSwitchesPrimaryAndFallback(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[2], "[agent: openai / gpt-5-nano (remote)]") {
 		t.Fatalf("expected debug label for swapped primary, got %q", msgs.sent[2])
+	}
+}
+
+func TestConfigReloadRebuildsRuntime(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Debug: config.DebugConfig{Enabled: true},
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{Provider: "openai", Model: "before"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "before reply", provider: "openai", model: "before"},
+		Executor:  &fakeExecutor{},
+		Reload: func(context.Context) (*ReloadAgents, error) {
+			return &ReloadAgents{
+				Config: &config.Config{
+					Debug: config.DebugConfig{Enabled: true},
+					Agent: config.AgentConfig{
+						Primary: config.ProviderConfig{Provider: "openai", Model: "after"},
+					},
+					Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+				},
+				Agent: &fakeAgent{response: "after reply", provider: "openai", model: "after"},
+			}, nil
+		},
+	})
+
+	ctx := context.Background()
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents reload",
+	}); err != nil {
+		t.Fatalf("handle /agents reload: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Agents reloaded.") ||
+		!strings.Contains(msgs.sent[0], "Primary model: after") {
+		t.Fatalf("unexpected reload response: %q", msgs.sent[0])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	}); err != nil {
+		t.Fatalf("handle conversation after reload: %v", err)
+	}
+	if !strings.Contains(msgs.sent[1], "after reply") {
+		t.Fatalf("expected reloaded agent reply, got %q", msgs.sent[1])
+	}
+	if !strings.Contains(msgs.sent[1], "[agent: openai / after (remote)]") {
+		t.Fatalf("expected reloaded debug label, got %q", msgs.sent[1])
+	}
+}
+
+func TestConfigReloadHandlesReloadFailure(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{Provider: "openai", Model: "before"},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "before reply"},
+		Executor:  &fakeExecutor{},
+		Reload: func(context.Context) (*ReloadAgents, error) {
+			return nil, errors.New("bad config")
+		},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents reload",
+	}); err != nil {
+		t.Fatalf("handle /agents reload failure: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Agent reload failed: bad config") {
+		t.Fatalf("unexpected reload failure response: %q", msgs.sent[0])
 	}
 }
 
@@ -1082,7 +1362,7 @@ func TestGroupMentionBuiltInCommandsBehaveLocally(t *testing.T) {
 		{name: "help", text: "@abx /help", normalized: "/help", want: "Available message types:"},
 		{name: "version", text: "@abx /version", normalized: "/version", want: "abx version test"},
 		{name: "config", text: "@abx /config", normalized: "/config", want: "Primary model:"},
-		{name: "agents_usage", text: "@abx /agents", normalized: "/agents", want: "Usage: /agents <list|status|switch|persona|format|fallback>"},
+		{name: "agents_usage", text: "@abx /agents", normalized: "/agents", want: "Usage: /agents <list|status|reload|switch|persona|format|thinking|fallback>"},
 		{name: "agents_persona", text: "@abx /agents persona", normalized: "/agents persona", want: "No persona is set for this session."},
 	}
 
@@ -1501,6 +1781,143 @@ func TestFormatIsPrependedToConversationPrompt(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected format system message, got %#v", agentSpy.lastMessages)
+	}
+}
+
+func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-8b",
+					Thinking: config.ThinkingConfig{
+						DefaultMode:   "enabled",
+						ParameterPath: "extra_body.chat_template_kwargs.enable_thinking",
+					},
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ok"},
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents thinking",
+	}); err != nil {
+		t.Fatalf("handle /agents thinking show default: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Current thinking mode:\nusing agent default (enabled)") {
+		t.Fatalf("unexpected default thinking response: %q", msgs.sent[0])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents thinking disable",
+	}); err != nil {
+		t.Fatalf("handle /agents thinking disable: %v", err)
+	}
+	if !strings.Contains(msgs.sent[1], "Thinking disabled for this session.") {
+		t.Fatalf("unexpected disable response: %q", msgs.sent[1])
+	}
+	mode, err := repo.GetActiveSessionThinkingMode(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active thinking mode: %v", err)
+	}
+	if mode != "disabled" {
+		t.Fatalf("expected disabled thinking mode, got %q", mode)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents thinking enable",
+	}); err != nil {
+		t.Fatalf("handle /agents thinking enable: %v", err)
+	}
+	if !strings.Contains(msgs.sent[2], "Thinking enabled for this session.") {
+		t.Fatalf("unexpected enable response: %q", msgs.sent[2])
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents thinking reset",
+	}); err != nil {
+		t.Fatalf("handle /agents thinking reset: %v", err)
+	}
+	if !strings.Contains(msgs.sent[3], "Thinking mode reset to the agent default for this session.") {
+		t.Fatalf("unexpected reset response: %q", msgs.sent[3])
+	}
+	mode, err = repo.GetActiveSessionThinkingMode(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active thinking mode after reset: %v", err)
+	}
+	if mode != "" {
+		t.Fatalf("expected empty thinking mode after reset, got %q", mode)
+	}
+}
+
+func TestThinkingModeIsPassedToAgentRuntime(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	agentSpy := &fakeAgent{response: "ok"}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-8b",
+					Thinking: config.ThinkingConfig{
+						ParameterPath: "extra_body.chat_template_kwargs.enable_thinking",
+					},
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     agentSpy,
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session id: %v", err)
+	}
+	if err := repo.SaveSessionThinkingMode(ctx, conversationID, sessionID, "disabled"); err != nil {
+		t.Fatalf("save session thinking mode: %v", err)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello",
+	}); err != nil {
+		t.Fatalf("handle conversation with thinking override: %v", err)
+	}
+	if agentSpy.lastOptions.Thinking == nil || *agentSpy.lastOptions.Thinking {
+		t.Fatalf("expected thinking=false to be passed, got %#v", agentSpy.lastOptions)
 	}
 }
 

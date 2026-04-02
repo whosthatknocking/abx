@@ -25,6 +25,10 @@ func NewFallback(primary, fallback Provider) Provider {
 }
 
 func (p *FallbackProvider) Chat(ctx context.Context, messages []types.Message, tools []types.Tool) (types.AgentResponse, error) {
+	return p.ChatWithOptions(ctx, messages, tools, types.AgentOptions{})
+}
+
+func (p *FallbackProvider) ChatWithOptions(ctx context.Context, messages []types.Message, tools []types.Tool, options types.AgentOptions) (types.AgentResponse, error) {
 	p.mu.RLock()
 	primary := p.primary
 	fallback := p.fallback
@@ -34,10 +38,10 @@ func (p *FallbackProvider) Chat(ctx context.Context, messages []types.Message, t
 		if fallback == nil {
 			return types.AgentResponse{}, fmt.Errorf("no agent provider configured")
 		}
-		return fallback.Chat(ctx, messages, tools)
+		return chatWithOptions(ctx, fallback, messages, tools, options)
 	}
 
-	response, err := primary.Chat(ctx, messages, tools)
+	response, err := chatWithOptions(ctx, primary, messages, tools, options)
 	if err == nil {
 		return response, nil
 	}
@@ -45,7 +49,7 @@ func (p *FallbackProvider) Chat(ctx context.Context, messages []types.Message, t
 		return types.AgentResponse{}, err
 	}
 
-	fallbackResponse, fallbackErr := fallback.Chat(ctx, messages, tools)
+	fallbackResponse, fallbackErr := chatWithOptions(ctx, fallback, messages, tools, options)
 	if fallbackErr == nil {
 		return fallbackResponse, nil
 	}
@@ -72,6 +76,10 @@ func (p *FallbackProvider) Check(ctx context.Context) error {
 }
 
 func (p *FallbackProvider) ChatPrimary(ctx context.Context, messages []types.Message, tools []types.Tool) (types.AgentResponse, error) {
+	return p.ChatPrimaryWithOptions(ctx, messages, tools, types.AgentOptions{})
+}
+
+func (p *FallbackProvider) ChatPrimaryWithOptions(ctx context.Context, messages []types.Message, tools []types.Tool, options types.AgentOptions) (types.AgentResponse, error) {
 	p.mu.RLock()
 	primary := p.primary
 	p.mu.RUnlock()
@@ -79,7 +87,7 @@ func (p *FallbackProvider) ChatPrimary(ctx context.Context, messages []types.Mes
 	if primary == nil {
 		return types.AgentResponse{}, fmt.Errorf("no primary agent provider configured")
 	}
-	return primary.Chat(ctx, messages, tools)
+	return chatWithOptions(ctx, primary, messages, tools, options)
 }
 
 func (p *FallbackProvider) CheckPrimary(ctx context.Context) error {
@@ -101,4 +109,11 @@ func (p *FallbackProvider) SwapPrimaryAndFallback() error {
 	}
 	p.primary, p.fallback = p.fallback, p.primary
 	return nil
+}
+
+func chatWithOptions(ctx context.Context, provider Provider, messages []types.Message, tools []types.Tool, options types.AgentOptions) (types.AgentResponse, error) {
+	if configurable, ok := provider.(OptionsProvider); ok {
+		return configurable.ChatWithOptions(ctx, messages, tools, options)
+	}
+	return provider.Chat(ctx, messages, tools)
 }

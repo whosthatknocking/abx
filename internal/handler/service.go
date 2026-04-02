@@ -43,11 +43,20 @@ type Options struct {
 	Messenger messenger
 	Agent     agent.Provider
 	Executor  commandExecutor
+	Reload    ReloadAgentsFunc
 }
+
+type ReloadAgents struct {
+	Config *config.Config
+	Agent  agent.Provider
+}
+
+type ReloadAgentsFunc func(ctx context.Context) (*ReloadAgents, error)
 
 type Service struct {
 	version   string
 	buildInfo string
+	runtimeMu sync.RWMutex
 	config    *config.Config
 	logger    *log.Logger
 	repo      repository.Repository
@@ -55,6 +64,7 @@ type Service struct {
 	messenger messenger
 	agent     agent.Provider
 	executor  commandExecutor
+	reload    ReloadAgentsFunc
 	locks     sync.Map
 }
 
@@ -68,6 +78,7 @@ const (
 )
 
 const defaultSessionFormat = "Respond in plain text format."
+const thinkingModeDefault = "default"
 
 func NewService(opts Options) *Service {
 	logger := opts.Logger
@@ -84,6 +95,7 @@ func NewService(opts Options) *Service {
 		messenger: opts.Messenger,
 		agent:     opts.Agent,
 		executor:  opts.Executor,
+		reload:    opts.Reload,
 	}
 }
 
@@ -191,13 +203,22 @@ func (s *Service) isImmediateLocalControl(env types.IncomingEnvelope) bool {
 		return false
 	}
 	switch fields[0] {
-	case "/help", "/version", "/config", "/reset":
+	case "/help", "/version", "/reset":
 		return true
+	case "/config":
+		return len(fields) == 1
 	case "/agents":
 		if len(fields) == 1 {
 			return true
 		}
-		return fields[1] == "list" || fields[1] == "status" || ((fields[1] == "persona" || fields[1] == "format" || fields[1] == "fallback") && len(fields) == 2)
+		switch fields[1] {
+		case "list", "status", "switch", "reload":
+			return true
+		case "persona", "format", "fallback", "thinking":
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -268,7 +289,8 @@ func (s *Service) cancelPendingApprovalOnNonApproval(ctx context.Context, env ty
 }
 
 func (s *Service) allowed(env types.IncomingEnvelope) bool {
-	if !isTrusted(env.Sender, s.config.Security.TrustedNumbers) {
+	cfg := s.runtimeConfig()
+	if !isTrusted(env.Sender, cfg.Security.TrustedNumbers) {
 		return false
 	}
 	if env.ChatType == types.ChatTypeGroup && !env.MentionedBot {
@@ -299,6 +321,10 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 	if err != nil {
 		return err
 	}
+	thinkingMode, err := s.repo.GetSessionThinkingMode(ctx, env.ConversationID, sessionID)
+	if err != nil {
+		return err
+	}
 	olderHistory, recentHistory := splitHistoryForSummary(history, recentHistoryLimit)
 	desiredSummary := summarizeMessages(olderHistory, summaryMaxChars)
 	if desiredSummary != summary {
@@ -318,7 +344,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		len(summary),
 		len(strings.TrimSpace(effectiveIncomingText(env))),
 	)
-	response, err := s.chatWithSessionAgent(ctx, env.ConversationID, agentMessages, nil, fallbackDisabled)
+	response, err := s.chatWithSessionAgent(ctx, env.ConversationID, agentMessages, nil, fallbackDisabled, thinkingMode)
 	if err != nil {
 		s.logger.Printf("agent interaction failed conversation=%s session=%s sender=%s err=%v", env.ConversationID, sessionID, env.Sender, err)
 		s.audit(audit.Record{
@@ -339,7 +365,7 @@ func (s *Service) handleConversation(ctx context.Context, env types.IncomingEnve
 		len(strings.TrimSpace(response.Text)),
 	)
 	if command, reason, ok := parseConversationCommandProposal(response.Text); ok {
-		if err := s.executor.Check(command); err != nil {
+		if err := s.runtimeExecutor().Check(command); err != nil {
 			s.audit(audit.Record{
 				Event:          "conversation_command_blocked",
 				ConversationID: env.ConversationID,
@@ -361,12 +387,12 @@ func (s *Service) handleRunRequest(ctx context.Context, env types.IncomingEnvelo
 	// Treat obviously command-shaped input as a direct command path so policy
 	// errors are reported immediately instead of being reframed as agent intent.
 	if looksLikeExactCommand(input) {
-		if err := s.executor.Check(input); err != nil {
+		if err := s.runtimeExecutor().Check(input); err != nil {
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", err))
 		}
 		return s.proposeCommand(ctx, env, sessionID, input, "")
 	}
-	if err := s.executor.Check(input); err == nil {
+	if err := s.runtimeExecutor().Check(input); err == nil {
 		return s.proposeCommand(ctx, env, sessionID, input, "")
 	}
 	return s.handleRecommendedRun(ctx, env, sessionID, input)
@@ -382,7 +408,11 @@ func (s *Service) handleRecommendedRun(ctx context.Context, env types.IncomingEn
 	if err != nil {
 		return err
 	}
-	response, err := s.chatWithSessionAgent(ctx, env.ConversationID, messages, nil, fallbackDisabled)
+	thinkingMode, err := s.repo.GetSessionThinkingMode(ctx, env.ConversationID, sessionID)
+	if err != nil {
+		return err
+	}
+	response, err := s.chatWithSessionAgent(ctx, env.ConversationID, messages, nil, fallbackDisabled, thinkingMode)
 	if err != nil {
 		s.audit(audit.Record{
 			Event:          "run_recommendation_error",
@@ -407,7 +437,7 @@ func (s *Service) handleRecommendedRun(ctx context.Context, env types.IncomingEn
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "I couldn't produce a runnable command recommendation for that request. Try a more specific `/run ...` request or provide the exact command.")
 	}
-	if err := s.executor.Check(command); err != nil {
+	if err := s.runtimeExecutor().Check(command); err != nil {
 		s.audit(audit.Record{
 			Event:          "run_recommendation_blocked",
 			ConversationID: env.ConversationID,
@@ -512,7 +542,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Approval token mismatch.")
 	}
 	s.logger.Printf("command approval accepted conversation=%s session=%s request_id=%s proposed_by=%s approved_by=%s command=%q", env.ConversationID, approval.SessionID, approval.RequestID, approval.ProposedBy, env.Sender, approval.Command)
-	if err := s.executor.Check(approval.Command); err != nil {
+	if err := s.runtimeExecutor().Check(approval.Command); err != nil {
 		if clearErr := s.repo.ClearPendingApproval(ctx, env.ConversationID, approval.RequestID); clearErr != nil {
 			return clearErr
 		}
@@ -530,7 +560,7 @@ func (s *Service) handleApproval(ctx context.Context, env types.IncomingEnvelope
 		})
 		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Command failed:\n%s", err))
 	}
-	output, execErr := s.executor.Execute(ctx, approval.Command)
+	output, execErr := s.runtimeExecutor().Execute(ctx, approval.Command)
 	if clearErr := s.repo.ClearPendingApproval(ctx, env.ConversationID, approval.RequestID); clearErr != nil {
 		return clearErr
 	}
@@ -574,13 +604,15 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 	switch fields[0] {
 	case "/agents":
 		if len(fields) < 2 {
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona|format|fallback>")
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|reload|switch|persona|format|thinking|fallback>")
 		}
 		switch fields[1] {
 		case "list":
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsListText())
 		case "status":
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx, env.ConversationID, sessionID))
+		case "reload":
+			return s.handleAgentsReload(ctx, env, sessionID)
 		case "persona":
 			if len(fields) == 2 {
 				persona, err := s.repo.GetSessionPersona(ctx, env.ConversationID, sessionID)
@@ -660,8 +692,64 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				Decision:       "/agents format set",
 			})
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Format updated for this session.")
+		case "thinking":
+			if !thinkingConfiguredForAnyAgent(s.runtimeConfig()) {
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking control is not configured for the active agents.")
+			}
+			if len(fields) == 2 {
+				mode, err := s.repo.GetSessionThinkingMode(ctx, env.ConversationID, sessionID)
+				if err != nil {
+					return err
+				}
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current thinking mode:\n"+sessionThinkingModeText(s.runtimeConfig(), mode))
+			}
+			switch normalizeThinkingModeValue(fields[2]) {
+			case "enabled":
+				if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, "enabled"); err != nil {
+					return err
+				}
+				s.audit(audit.Record{
+					Event:          "control_command",
+					ConversationID: env.ConversationID,
+					SessionID:      sessionID,
+					Sender:         env.Sender,
+					MessageType:    "control",
+					Decision:       "/agents thinking enable",
+				})
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking enabled for this session.")
+			case "disabled":
+				if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, "disabled"); err != nil {
+					return err
+				}
+				s.audit(audit.Record{
+					Event:          "control_command",
+					ConversationID: env.ConversationID,
+					SessionID:      sessionID,
+					Sender:         env.Sender,
+					MessageType:    "control",
+					Decision:       "/agents thinking disable",
+				})
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking disabled for this session.")
+			default:
+				if strings.EqualFold(fields[2], "reset") || strings.EqualFold(fields[2], "default") {
+					if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, ""); err != nil {
+						return err
+					}
+					s.audit(audit.Record{
+						Event:          "control_command",
+						ConversationID: env.ConversationID,
+						SessionID:      sessionID,
+						Sender:         env.Sender,
+						MessageType:    "control",
+						Decision:       "/agents thinking reset",
+					})
+					return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking mode reset to the agent default for this session.")
+				}
+				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents thinking <enable|disable|reset>")
+			}
 		case "fallback":
-			if !fallbackConfigured(s.config) {
+			cfg := s.runtimeConfig()
+			if !fallbackConfigured(cfg) {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
 			}
 			if len(fields) == 2 {
@@ -702,17 +790,20 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents fallback <enable|disable>")
 			}
 		case "switch":
-			if !fallbackConfigured(s.config) {
+			cfg, runtimeAgent, runtimeExecutor := s.runtimeSnapshot()
+			if !fallbackConfigured(cfg) {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Fallback agent is not configured.")
 			}
-			switcher, ok := s.agent.(agent.Switcher)
+			switcher, ok := runtimeAgent.(agent.Switcher)
 			if !ok {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Agent switching is not supported by the current runtime.")
 			}
 			if err := switcher.SwapPrimaryAndFallback(); err != nil {
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Agent switch failed: %v", err))
 			}
-			s.config.Agent.Primary, s.config.Agent.Fallback = s.config.Agent.Fallback, s.config.Agent.Primary
+			nextCfg := *cfg
+			nextCfg.Agent.Primary, nextCfg.Agent.Fallback = cfg.Agent.Fallback, cfg.Agent.Primary
+			s.setRuntime(&nextCfg, runtimeAgent, runtimeExecutor)
 			s.audit(audit.Record{
 				Event:          "control_command",
 				ConversationID: env.ConversationID,
@@ -721,7 +812,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 				MessageType:    "control",
 				Decision:       "/agents switch",
 			})
-			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Swapped active agent order.\nPrimary model: %s\nFallback model: %s", normalizedPrimaryModel(s.config), strings.TrimSpace(s.config.Agent.Fallback.Model)))
+			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Swapped active agent order.\nPrimary model: %s\nFallback model: %s", normalizedPrimaryModel(&nextCfg), strings.TrimSpace(nextCfg.Agent.Fallback.Model)))
 		default:
 			return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Unknown agents command.")
 		}
@@ -782,6 +873,10 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 		})
 		return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.versionText())
 	case "/config":
+		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
+		if len(fields) > 1 {
+			return false, nil
+		}
 		s.audit(audit.Record{
 			Event:          "control_command",
 			ConversationID: env.ConversationID,
@@ -794,7 +889,7 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 	case "/agents":
 		fields := strings.Fields(strings.TrimSpace(effectiveIncomingText(env)))
 		if len(fields) < 2 {
-			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|switch|persona|format|fallback>")
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents <list|status|reload|switch|persona|format|thinking|fallback>")
 		}
 		switch fields[1] {
 		case "list":
@@ -817,6 +912,11 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 				Decision:       "/agents status",
 			})
 			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, s.agentsStatusText(ctx, env.ConversationID, sessionID))
+		case "reload":
+			if len(fields) > 2 {
+				return false, nil
+			}
+			return true, s.handleAgentsReload(ctx, env, sessionID)
 		case "persona":
 			if len(fields) > 2 {
 				return false, nil
@@ -854,6 +954,26 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 				return true, err
 			}
 			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current format:\n"+effectiveSessionFormat(format))
+		case "thinking":
+			if len(fields) > 2 {
+				return false, nil
+			}
+			if !thinkingConfiguredForAnyAgent(s.runtimeConfig()) {
+				return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking control is not configured for the active agents.")
+			}
+			s.audit(audit.Record{
+				Event:          "control_command",
+				ConversationID: env.ConversationID,
+				SessionID:      sessionID,
+				Sender:         env.Sender,
+				MessageType:    "control",
+				Decision:       "/agents thinking",
+			})
+			mode, err := s.repo.GetSessionThinkingMode(ctx, env.ConversationID, sessionID)
+			if err != nil {
+				return true, err
+			}
+			return true, s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Current thinking mode:\n"+sessionThinkingModeText(s.runtimeConfig(), mode))
 		case "fallback":
 			if len(fields) > 2 {
 				return false, nil
@@ -1013,8 +1133,10 @@ func helpText() string {
 		"- /config: show current configuration",
 		"- /agents list: list configured agents",
 		"- /agents status: show agent health status",
+		"- /agents reload: reload agent config from disk",
 		"- /agents persona: get/set persona for this session",
 		"- /agents format: get/set response format for this session",
+		"- /agents thinking: get/set thinking mode for this session",
 		"- /agents fallback: get/set fallback agent status for this session",
 		"- /agents switch: swap primary and fallback agents",
 		"- /reset: start a new conversation session",
@@ -1023,32 +1145,41 @@ func helpText() string {
 }
 
 func (s *Service) agentsListText() string {
+	cfg := s.runtimeConfig()
 	lines := []string{
 		"Configured agents:",
-		fmt.Sprintf("- primary: %s (%s)", normalizedPrimaryModel(s.config), normalizedContract(s.config.Agent.Primary.Provider)),
+		fmt.Sprintf("- primary: %s (%s)", normalizedPrimaryModel(cfg), normalizedContract(cfg.Agent.Primary.Provider)),
 	}
-	if fallbackConfigured(s.config) {
-		lines = append(lines, fmt.Sprintf("- fallback: %s (%s)", strings.TrimSpace(s.config.Agent.Fallback.Model), normalizedContract(s.config.Agent.Fallback.Provider)))
+	if fallbackConfigured(cfg) {
+		lines = append(lines, fmt.Sprintf("- fallback: %s (%s)", strings.TrimSpace(cfg.Agent.Fallback.Model), normalizedContract(cfg.Agent.Fallback.Provider)))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (s *Service) chatWithSessionAgent(ctx context.Context, conversationID string, messages []types.Message, tools []types.Tool, fallbackDisabled bool) (types.AgentResponse, error) {
+func (s *Service) chatWithSessionAgent(ctx context.Context, conversationID string, messages []types.Message, tools []types.Tool, fallbackDisabled bool, thinkingMode string) (types.AgentResponse, error) {
+	runtimeAgent := s.runtimeAgent()
+	options := types.AgentOptions{
+		Thinking: thinkingModeOption(thinkingMode),
+	}
 	if fallbackDisabled {
-		if primaryOnly, ok := s.agent.(agent.PrimaryOnly); ok {
-			return primaryOnly.ChatPrimary(ctx, messages, tools)
+		if primaryOnly, ok := runtimeAgent.(agent.PrimaryOnly); ok {
+			return primaryOnly.ChatPrimaryWithOptions(ctx, messages, tools, options)
 		}
 	}
-	return s.agent.Chat(ctx, messages, tools)
+	if configurable, ok := runtimeAgent.(agent.OptionsProvider); ok {
+		return configurable.ChatWithOptions(ctx, messages, tools, options)
+	}
+	return runtimeAgent.Chat(ctx, messages, tools)
 }
 
 func (s *Service) agentsStatusText(ctx context.Context, conversationID, sessionID string) string {
+	cfg := s.runtimeConfig()
 	lines := []string{
 		"Agent status:",
-		s.singleAgentStatusLine(ctx, "primary", s.config.Agent.Primary),
+		s.singleAgentStatusLine(ctx, "primary", cfg.Agent.Primary),
 	}
-	if fallbackConfigured(s.config) {
-		lines = append(lines, s.singleAgentStatusLine(ctx, "fallback", s.config.Agent.Fallback))
+	if fallbackConfigured(cfg) {
+		lines = append(lines, s.singleAgentStatusLine(ctx, "fallback", cfg.Agent.Fallback))
 		disabled, err := s.repo.GetSessionFallbackDisabled(ctx, conversationID, sessionID)
 		if err == nil {
 			lines = append(lines, "Fallback: "+sessionFallbackModeText(disabled))
@@ -1083,25 +1214,27 @@ func providerForStatus(cfg config.ProviderConfig) (agent.Provider, bool) {
 }
 
 func (s *Service) configText() string {
+	cfg := s.runtimeConfig()
 	lines := []string{
-		fmt.Sprintf("Messaging: %s / %s", normalizedMessagingProvider(s.config), normalizedRPCMode(s.config)),
-		fmt.Sprintf("Primary model: %s", normalizedPrimaryModel(s.config)),
-		fmt.Sprintf("Primary contract: %s", normalizedContract(s.config.Agent.Primary.Provider)),
-		fmt.Sprintf("Primary request timeout: %ds", normalizedProviderRequestTimeout(s.config.Agent.Primary)),
+		fmt.Sprintf("Messaging: %s / %s", normalizedMessagingProvider(cfg), normalizedRPCMode(cfg)),
+		fmt.Sprintf("Primary model: %s", normalizedPrimaryModel(cfg)),
+		fmt.Sprintf("Primary contract: %s", normalizedContract(cfg.Agent.Primary.Provider)),
+		fmt.Sprintf("Primary request timeout: %ds", normalizedProviderRequestTimeout(cfg.Agent.Primary)),
 	}
-	if fallbackConfigured(s.config) {
+	if fallbackConfigured(cfg) {
 		lines = append(lines,
-			fmt.Sprintf("Fallback model: %s", strings.TrimSpace(s.config.Agent.Fallback.Model)),
-			fmt.Sprintf("Fallback contract: %s", normalizedContract(s.config.Agent.Fallback.Provider)),
-			fmt.Sprintf("Fallback request timeout: %ds", normalizedProviderRequestTimeout(s.config.Agent.Fallback)),
+			fmt.Sprintf("Fallback model: %s", strings.TrimSpace(cfg.Agent.Fallback.Model)),
+			fmt.Sprintf("Fallback contract: %s", normalizedContract(cfg.Agent.Fallback.Provider)),
+			fmt.Sprintf("Fallback request timeout: %ds", normalizedProviderRequestTimeout(cfg.Agent.Fallback)),
 		)
 	}
 	lines = append(lines,
-		fmt.Sprintf("MCP: %s", normalizedMCPStatus(s.config)),
-		fmt.Sprintf("Storage: %s", normalizedDatabaseType(s.config)),
-		fmt.Sprintf("Command policy: %s", normalizedPolicyMode(s.config)),
-		fmt.Sprintf("Command timeout: %ds", normalizedCommandTimeout(s.config)),
-		fmt.Sprintf("Debug: %s", normalizedDebugState(s.config)),
+		fmt.Sprintf("MCP: %s", normalizedMCPStatus(cfg)),
+		fmt.Sprintf("Storage: %s", normalizedDatabaseType(cfg)),
+		fmt.Sprintf("Command policy: %s", normalizedPolicyMode(cfg)),
+		fmt.Sprintf("Command timeout: %ds", normalizedCommandTimeout(cfg)),
+		fmt.Sprintf("Thinking control: %s", normalizedThinkingState(cfg)),
+		fmt.Sprintf("Debug: %s", normalizedDebugState(cfg)),
 		fmt.Sprintf("Version: %s", strings.TrimSpace(s.version)),
 	)
 	return strings.Join(lines, "\n")
@@ -1132,6 +1265,19 @@ func normalizedProviderRequestTimeout(provider config.ProviderConfig) int {
 		return provider.RequestTimeoutSeconds
 	}
 	return 60
+}
+
+func thinkingModeOption(mode string) *bool {
+	switch normalizeThinkingModeValue(mode) {
+	case "enabled":
+		value := true
+		return &value
+	case "disabled":
+		value := false
+		return &value
+	default:
+		return nil
+	}
 }
 
 func splitHistoryForSummary(messages []types.Message, recentLimit int) ([]types.Message, []types.Message) {
@@ -1282,22 +1428,34 @@ func sessionFallbackModeText(disabled bool) string {
 	return "enabled for this session"
 }
 
+func sessionThinkingModeText(cfg *config.Config, mode string) string {
+	switch normalizeThinkingModeValue(mode) {
+	case "enabled":
+		return "enabled for this session"
+	case "disabled":
+		return "disabled for this session"
+	default:
+		return "using agent default (" + defaultThinkingModeText(cfg) + ")"
+	}
+}
+
 func (s *Service) formatAgentReply(response types.AgentResponse) string {
 	text := response.Text
-	if s.config == nil || !s.config.Debug.Enabled {
+	cfg := s.runtimeConfig()
+	if cfg == nil || !cfg.Debug.Enabled {
 		return text
 	}
 	provider := strings.TrimSpace(response.Provider)
 	if provider == "" {
-		provider = strings.TrimSpace(s.config.Agent.Primary.Provider)
+		provider = strings.TrimSpace(cfg.Agent.Primary.Provider)
 	}
 	model := strings.TrimSpace(response.Model)
 	if model == "" {
-		model = strings.TrimSpace(s.config.Agent.Primary.Model)
+		model = strings.TrimSpace(cfg.Agent.Primary.Model)
 	}
 	class := strings.TrimSpace(response.EndpointClass)
 	if class == "" {
-		class = endpointClass(s.config.Agent.Primary.BaseURL)
+		class = endpointClass(cfg.Agent.Primary.BaseURL)
 	}
 	details := []string{fmt.Sprintf("agent: %s / %s (%s)", provider, model, class)}
 	if len(response.Integrations) > 0 {
@@ -1664,4 +1822,110 @@ func normalizedDebugState(cfg *config.Config) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+func normalizedThinkingState(cfg *config.Config) string {
+	if !thinkingConfiguredForAnyAgent(cfg) {
+		return "not configured"
+	}
+	return "configured (default: " + defaultThinkingModeText(cfg) + ")"
+}
+
+func normalizeThinkingModeValue(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "enabled", "enable", "on", "true":
+		return "enabled"
+	case "disabled", "disable", "off", "false":
+		return "disabled"
+	default:
+		return ""
+	}
+}
+
+func thinkingConfiguredForAnyAgent(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return thinkingConfigured(cfg.Agent.Primary) || thinkingConfigured(cfg.Agent.Fallback)
+}
+
+func thinkingConfigured(provider config.ProviderConfig) bool {
+	return strings.TrimSpace(provider.Thinking.ParameterPath) != "" ||
+		strings.TrimSpace(provider.Thinking.EnableSuffix) != "" ||
+		strings.TrimSpace(provider.Thinking.DisableSuffix) != "" ||
+		strings.TrimSpace(provider.Thinking.DefaultMode) != ""
+}
+
+func defaultThinkingModeText(cfg *config.Config) string {
+	if cfg == nil {
+		return thinkingModeDefault
+	}
+	primary := normalizeThinkingModeValue(cfg.Agent.Primary.Thinking.DefaultMode)
+	fallback := normalizeThinkingModeValue(cfg.Agent.Fallback.Thinking.DefaultMode)
+	switch {
+	case primary == "" && fallback == "":
+		return thinkingModeDefault
+	case fallback == "" || fallback == primary:
+		return primary
+	case primary == "":
+		return fallback
+	default:
+		return primary + " primary / " + fallback + " fallback"
+	}
+}
+
+func (s *Service) handleAgentsReload(ctx context.Context, env types.IncomingEnvelope, sessionID string) error {
+	if s.reload == nil {
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Agent reload is not available in the current runtime.")
+	}
+	reloaded, err := s.reload(ctx)
+	if err != nil {
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, fmt.Sprintf("Agent reload failed: %v", err))
+	}
+	if reloaded == nil || reloaded.Config == nil || reloaded.Agent == nil {
+		return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Agent reload failed: runtime reload returned an incomplete agent configuration.")
+	}
+	_, _, runtimeExecutor := s.runtimeSnapshot()
+	s.setRuntime(reloaded.Config, reloaded.Agent, runtimeExecutor)
+	s.audit(audit.Record{
+		Event:          "control_command",
+		ConversationID: env.ConversationID,
+		SessionID:      sessionID,
+		Sender:         env.Sender,
+		MessageType:    "control",
+		Decision:       "/agents reload",
+	})
+	return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Agents reloaded.\n"+s.configText())
+}
+
+func (s *Service) runtimeSnapshot() (*config.Config, agent.Provider, commandExecutor) {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return s.config, s.agent, s.executor
+}
+
+func (s *Service) runtimeConfig() *config.Config {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return s.config
+}
+
+func (s *Service) runtimeAgent() agent.Provider {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return s.agent
+}
+
+func (s *Service) runtimeExecutor() commandExecutor {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return s.executor
+}
+
+func (s *Service) setRuntime(cfg *config.Config, runtimeAgent agent.Provider, runtimeExecutor commandExecutor) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	s.config = cfg
+	s.agent = runtimeAgent
+	s.executor = runtimeExecutor
 }

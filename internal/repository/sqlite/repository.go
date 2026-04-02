@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   summary TEXT NOT NULL DEFAULT '',
   persona TEXT NOT NULL DEFAULT '',
   format TEXT NOT NULL DEFAULT '',
+  thinking_mode TEXT NOT NULL DEFAULT '',
   fallback_disabled INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (conversation_id, session_id)
 );
@@ -80,6 +81,9 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
 		return err
 	}
 	if err := r.ensureSessionFormatColumn(); err != nil {
+		return err
+	}
+	if err := r.ensureSessionThinkingModeColumn(); err != nil {
 		return err
 	}
 	return r.ensureSessionFallbackDisabledColumn()
@@ -243,6 +247,36 @@ func (r *Repository) GetActiveSessionFormat(ctx context.Context, conversationID 
 	return r.GetSessionFormat(ctx, conversationID, sessionID)
 }
 
+func (r *Repository) SaveSessionThinkingMode(_ context.Context, conversationID, sessionID, mode string) error {
+	if err := r.ensureConversation(conversationID); err != nil {
+		return err
+	}
+	if err := r.ensureSession(conversationID, sessionID); err != nil {
+		return err
+	}
+	_, err := r.exec(`UPDATE sessions SET thinking_mode = ` + q(mode) + ` WHERE conversation_id = ` + q(conversationID) + ` AND session_id = ` + q(sessionID) + `;`)
+	return err
+}
+
+func (r *Repository) GetSessionThinkingMode(_ context.Context, conversationID, sessionID string) (string, error) {
+	rows, err := r.query(`SELECT thinking_mode FROM sessions WHERE conversation_id = ` + q(conversationID) + ` AND session_id = ` + q(sessionID) + `;`)
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return stringField(rows[0], "thinking_mode"), nil
+}
+
+func (r *Repository) GetActiveSessionThinkingMode(ctx context.Context, conversationID string) (string, error) {
+	sessionID, err := r.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		return "", err
+	}
+	return r.GetSessionThinkingMode(ctx, conversationID, sessionID)
+}
+
 func (r *Repository) SaveSessionFallbackDisabled(_ context.Context, conversationID, sessionID string, disabled bool) error {
 	if err := r.ensureConversation(conversationID); err != nil {
 		return err
@@ -345,12 +379,12 @@ func (r *Repository) ensureConversation(conversationID string) error {
 	}
 	sessionID := "session_" + randomSuffix()
 	_, err = r.exec(`INSERT INTO conversations (conversation_id, active_session_id) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `);` +
-		`INSERT INTO sessions (conversation_id, session_id, summary, persona, format, fallback_disabled) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '', 0);`)
+		`INSERT INTO sessions (conversation_id, session_id, summary, persona, format, thinking_mode, fallback_disabled) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '', '', 0);`)
 	return err
 }
 
 func (r *Repository) ensureSession(conversationID, sessionID string) error {
-	_, err := r.exec(`INSERT OR IGNORE INTO sessions (conversation_id, session_id, summary, persona, format, fallback_disabled) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '', 0);`)
+	_, err := r.exec(`INSERT OR IGNORE INTO sessions (conversation_id, session_id, summary, persona, format, thinking_mode, fallback_disabled) VALUES (` + q(conversationID) + `, ` + q(sessionID) + `, '', '', '', '', 0);`)
 	return err
 }
 
@@ -379,6 +413,20 @@ func (r *Repository) ensureSessionFormatColumn() error {
 		}
 	}
 	_, err = r.exec(`ALTER TABLE sessions ADD COLUMN format TEXT NOT NULL DEFAULT '';`)
+	return err
+}
+
+func (r *Repository) ensureSessionThinkingModeColumn() error {
+	rows, err := r.query(`PRAGMA table_info(sessions);`)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if stringField(row, "name") == "thinking_mode" {
+			return nil
+		}
+	}
+	_, err = r.exec(`ALTER TABLE sessions ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT '';`)
 	return err
 }
 

@@ -27,7 +27,7 @@
 
 - `/help` shows a quick summary of the available message types and built-in commands.
 - Normal questions are sent to the configured agent.
-- `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents format`, `/agents fallback`, `/agents switch`, and `/reset` are built-in control commands.
+- `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, and `/reset` are built-in control commands.
 - `/run` shows command usage help.
 - `/run <command-or-intent>` can either:
   - propose an exact shell command directly when the input already looks executable under the current policy
@@ -72,8 +72,10 @@
 - `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, MCP visibility, storage, command policy, debug state, and version
 - `/agents list`: show the configured primary and optional fallback agents
 - `/agents status`: check whether the configured agents are reachable
+- `/agents reload`: reload agent-related config from disk so updated models and agent settings take effect without restarting the process
 - `/agents persona`: show the current session persona, or set it with `/agents persona <instruction>`, or clear it with `/agents persona reset`
 - `/agents format`: show the current session format, or set it with `/agents format <instruction>`, or clear it with `/agents format reset`
+- `/agents thinking`: show the current session thinking mode, enable it with `/agents thinking enable`, disable it with `/agents thinking disable`, or reset to the agent default with `/agents thinking reset`
 - `/agents fallback`: show whether fallback is enabled for the current session, disable it with `/agents fallback disable`, or re-enable it with `/agents fallback enable`
 - `/agents switch`: switch the active primary and fallback agent order for the current running process
 - `/reset`: start a fresh active session for the current chat while preserving historical state

@@ -42,6 +42,10 @@ type Tool struct {
 	Name string
 }
 
+type AgentOptions struct {
+	Thinking *bool
+}
+
 type AgentResponse struct {
 	Text          string
 	Provider      string

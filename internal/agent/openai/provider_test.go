@@ -22,7 +22,7 @@ func TestChatRequestBodyIncludesIntegrationsForLocalEndpoint(t *testing.T) {
 	body := provider.chatRequestBody([]types.Message{{
 		Role: types.RoleUser,
 		Text: "hello",
-	}})
+	}}, types.AgentOptions{})
 
 	if provider.chatURL() != "http://127.0.0.1:1234/api/v1/chat" {
 		t.Fatalf("unexpected local LM Studio chat URL %q", provider.chatURL())
@@ -55,7 +55,7 @@ func TestChatRequestBodyOmitsIntegrationsForRemoteEndpoint(t *testing.T) {
 	body := provider.chatRequestBody([]types.Message{{
 		Role: types.RoleUser,
 		Text: "hello",
-	}})
+	}}, types.AgentOptions{})
 
 	if provider.chatURL() != "https://api.example.test/v1/chat/completions" {
 		t.Fatalf("unexpected remote chat URL %q", provider.chatURL())
@@ -74,13 +74,88 @@ func TestChatRequestBodyOmitsIntegrationsWhenNoServersAreEnabled(t *testing.T) {
 	body := provider.chatRequestBody([]types.Message{{
 		Role: types.RoleUser,
 		Text: "hello",
-	}})
+	}}, types.AgentOptions{})
 
 	if provider.chatURL() != "http://127.0.0.1:1234/v1/chat/completions" {
 		t.Fatalf("unexpected local non-MCP chat URL %q", provider.chatURL())
 	}
 	if _, exists := body["integrations"]; exists {
 		t.Fatalf("expected integrations to be omitted when no MCP servers are enabled, got %#v", body["integrations"])
+	}
+}
+
+func TestChatRequestBodyAppliesThinkingParameterPath(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL: "http://127.0.0.1:1234/v1",
+		Model:   "Qwen/Qwen3-8B",
+		Thinking: config.ThinkingConfig{
+			ParameterPath: "extra_body.chat_template_kwargs.enable_thinking",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(false)})
+
+	extraBody, ok := body["extra_body"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extra_body map, got %#v", body["extra_body"])
+	}
+	templateKwargs, ok := extraBody["chat_template_kwargs"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected chat_template_kwargs map, got %#v", extraBody["chat_template_kwargs"])
+	}
+	if value, ok := templateKwargs["enable_thinking"].(bool); !ok || value {
+		t.Fatalf("expected enable_thinking=false, got %#v", templateKwargs["enable_thinking"])
+	}
+}
+
+func TestChatRequestBodyAppliesThinkingSuffix(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL: "http://127.0.0.1:1234/v1",
+		Model:   "Qwen/Qwen3-8B",
+		Thinking: config.ThinkingConfig{
+			DisableSuffix: "/nothink",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(false)})
+
+	messages, ok := body["messages"].([]map[string]string)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected chat messages, got %#v", body["messages"])
+	}
+	if got := messages[0]["content"]; !strings.Contains(got, "/nothink") {
+		t.Fatalf("expected /nothink suffix in %q", got)
+	}
+}
+
+func TestNativeLMStudioChatOmitsThinkingParameterPath(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL:      "http://127.0.0.1:1234/v1",
+		Model:        "Qwen/Qwen3-8B",
+		Integrations: []string{"mcp/playwright"},
+		Thinking: config.ThinkingConfig{
+			ParameterPath: "extra_body.chat_template_kwargs.enable_thinking",
+			DisableSuffix: "/nothink",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(false)})
+
+	if _, exists := body["extra_body"]; exists {
+		t.Fatalf("expected native LM Studio body to omit extra_body, got %#v", body["extra_body"])
+	}
+	input, ok := body["input"].(string)
+	if !ok || !strings.Contains(input, "/nothink") {
+		t.Fatalf("expected /nothink in native LM Studio input, got %#v", body["input"])
 	}
 }
 
@@ -320,4 +395,8 @@ func TestCheckFallsBackToModelsList(t *testing.T) {
 	if len(requested) != 2 || requested[0] != "/v1/models/gpt-5-nano" || requested[1] != "/v1/models" {
 		t.Fatalf("unexpected connectivity check sequence: %#v", requested)
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

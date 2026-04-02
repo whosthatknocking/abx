@@ -11,6 +11,10 @@ type Provider interface {
 	Check(ctx context.Context) error
 }
 
+type OptionsProvider interface {
+	ChatWithOptions(ctx context.Context, messages []types.Message, tools []types.Tool, options types.AgentOptions) (types.AgentResponse, error)
+}
+
 type Switcher interface {
 	SwapPrimaryAndFallback() error
 }
@@ -18,4 +22,5 @@ type Switcher interface {
 type PrimaryOnly interface {
 	ChatPrimary(ctx context.Context, messages []types.Message, tools []types.Tool) (types.AgentResponse, error)
 	CheckPrimary(ctx context.Context) error
+	ChatPrimaryWithOptions(ctx context.Context, messages []types.Message, tools []types.Tool, options types.AgentOptions) (types.AgentResponse, error)
 }

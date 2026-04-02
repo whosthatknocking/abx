@@ -19,6 +19,10 @@ The project is designed to stay transport-agnostic and provider-agnostic over ti
 - [User Guide](./docs/USER_GUIDE.md)
 - [Development](./docs/DEVELOPMENT.md)
 
+## Versioning
+
+`abx` uses the checked-in `VERSION` file as the default build version source. GitHub releases are published by pushing a matching tag such as `v0.1.0`.
+
 ## License
 
 MIT, see [LICENSE](./LICENSE).

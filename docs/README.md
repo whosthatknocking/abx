@@ -87,6 +87,7 @@ rpc_port = 7583
 ## Configuration Notes
 
 - Configuration is file-based only in v1.
+- The checked-in `VERSION` file is the source of truth for release versioning.
 - `agent.primary.model` is required for OpenAI.
 - `agent.primary.request_timeout_seconds` and `agent.fallback.request_timeout_seconds` control how long `abx` waits before treating an agent request as failed and moving to fallback.
 - Agents can optionally declare thinking-control settings directly on each agent block with keys such as `thinking_default`, `thinking_parameter_path`, `thinking_enable_suffix`, and `thinking_disable_suffix`.
@@ -98,6 +99,7 @@ rpc_port = 7583
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.
 - `/version` includes build metadata when it is available in the binary.
 - `/config` reports normalized, non-secret runtime settings including messaging mode, agent contract/model, MCP visibility, storage, command policy, thinking-control state, debug state, and version.
+- Pushing a Git tag in the form `vX.Y.Z` that matches `VERSION` triggers the GitHub release workflow and uploads release artifacts.
 
 ## Notes
 

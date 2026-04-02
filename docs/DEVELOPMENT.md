@@ -56,14 +56,17 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 
 - `make fmt`
 - `make test`
+- `make release-artifacts`
 - `GOCACHE=$(pwd)/.gocache GOMODCACHE=$(pwd)/.gomodcache go vet ./...`
 - GitHub Actions runs formatting, tests, `go vet`, and build checks on every push and pull request via `.github/workflows/ci.yml`
+- GitHub Actions also publishes a GitHub release from `.github/workflows/release.yml` when a `vX.Y.Z` tag is pushed and the tag matches the checked-in `VERSION` file
 
 ## Commands
 
 - `make build`
 - `make test`
 - `make fmt`
+- `make release-artifacts`
 
 ## Known Gaps
 

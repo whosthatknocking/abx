@@ -913,7 +913,12 @@ func TestAgentsStatusCommandChecksConfiguredAgents(t *testing.T) {
 		Version: "test",
 		Config: &config.Config{
 			Agent: config.AgentConfig{
-				Primary:  config.ProviderConfig{Provider: "openai", Model: "qwen/qwen3-4b-2507", BaseURL: okServer.URL + "/v1"},
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-4b-2507",
+					BaseURL:  okServer.URL + "/v1",
+					Thinking: config.ThinkingConfig{DefaultMode: "enabled", ParameterPath: "reasoning"},
+				},
 				Fallback: config.ProviderConfig{Provider: "openai", Model: "gpt-5-nano", BaseURL: failingServer.URL + "/v1"},
 			},
 			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
@@ -935,7 +940,61 @@ func TestAgentsStatusCommandChecksConfiguredAgents(t *testing.T) {
 	}
 	if !strings.Contains(msgs.sent[0], "Agent status:") ||
 		!strings.Contains(msgs.sent[0], "- primary: qwen/qwen3-4b-2507 (openai-compatible): ok") ||
-		!strings.Contains(msgs.sent[0], "- fallback: gpt-5-nano (openai-compatible): error") {
+		!strings.Contains(msgs.sent[0], "- fallback: gpt-5-nano (openai-compatible): error") ||
+		!strings.Contains(msgs.sent[0], "Fallback: enabled for this session") ||
+		!strings.Contains(msgs.sent[0], "Thinking: using agent default (enabled)") {
+		t.Fatalf("unexpected /agents status response: %q", msgs.sent[0])
+	}
+}
+
+func TestAgentsStatusReportsSessionThinkingOverride(t *testing.T) {
+	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer okServer.Close()
+
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-4b-2507",
+					BaseURL:  okServer.URL + "/v1",
+					Thinking: config.ThinkingConfig{DefaultMode: "enabled", ParameterPath: "reasoning"},
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Auditor:   nil,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session id: %v", err)
+	}
+	if err := repo.SaveSessionThinkingMode(ctx, conversationID, sessionID, "disabled"); err != nil {
+		t.Fatalf("save session thinking mode: %v", err)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents status",
+	}); err != nil {
+		t.Fatalf("handle /agents status: %v", err)
+	}
+	if !strings.Contains(msgs.sent[0], "Thinking: disabled for this session") {
 		t.Fatalf("unexpected /agents status response: %q", msgs.sent[0])
 	}
 }

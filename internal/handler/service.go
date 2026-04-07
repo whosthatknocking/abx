@@ -1207,6 +1207,12 @@ func (s *Service) agentsStatusText(ctx context.Context, conversationID, sessionI
 			lines = append(lines, "Fallback: "+sessionFallbackModeText(disabled))
 		}
 	}
+	if thinkingConfiguredForAnyAgent(cfg) {
+		mode, err := s.repo.GetSessionThinkingMode(ctx, conversationID, sessionID)
+		if err == nil {
+			lines = append(lines, "Thinking: "+sessionThinkingModeText(cfg, mode))
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 

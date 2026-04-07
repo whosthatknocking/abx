@@ -71,7 +71,7 @@
 - `/version`: show the running application version and build metadata when available
 - `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, MCP visibility, storage, command policy, debug state, and version
 - `/agents list`: show the configured primary and optional fallback agents
-- `/agents status`: check whether the configured agents are reachable
+- `/agents status`: check whether the configured agents are reachable, and show the current session fallback and thinking status when configured
 - `/agents reload`: reload agent-related config from disk so updated models and agent settings take effect without restarting the process
 - `/agents persona`: show the current session persona, or set it with `/agents persona <instruction>`, or clear it with `/agents persona reset`
 - `/agents format`: show the current session format, or set it with `/agents format <instruction>`, or clear it with `/agents format reset`

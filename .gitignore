@@ -1,3 +1,12 @@
 .gocache/
 .gomodcache/
 /abx
+config.toml
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.log
+audit.log
+.DS_Store

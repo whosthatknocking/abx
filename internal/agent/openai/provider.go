@@ -438,7 +438,7 @@ func (p *Provider) toLMStudioInputItems(messages []types.Message) any {
 	items := make([]map[string]any, 0, 1+len(imageAttachments))
 	if strings.TrimSpace(input) != "" {
 		items = append(items, map[string]any{
-			"type":    "message",
+			"type":    "text",
 			"content": input,
 		})
 	}

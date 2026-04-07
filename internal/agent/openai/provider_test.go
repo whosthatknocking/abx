@@ -311,6 +311,9 @@ func TestNativeLMStudioChatIncludesLatestUserImages(t *testing.T) {
 	if !ok || len(input) != 2 {
 		t.Fatalf("expected LM Studio input items, got %#v", body["input"])
 	}
+	if input[0]["type"] != "text" {
+		t.Fatalf("expected text input item, got %#v", input[0])
+	}
 	if input[1]["type"] != "image" {
 		t.Fatalf("expected image input item, got %#v", input[1])
 	}
@@ -352,6 +355,9 @@ func TestNativeLMStudioChatCarriesForwardMostRecentUserImagesForFollowUp(t *test
 	input, ok := body["input"].([]map[string]any)
 	if !ok || len(input) != 2 {
 		t.Fatalf("expected LM Studio input items, got %#v", body["input"])
+	}
+	if input[0]["type"] != "text" {
+		t.Fatalf("expected text input item, got %#v", input[0])
 	}
 	if input[1]["type"] != "image" {
 		t.Fatalf("expected carried-forward image input item, got %#v", input[1])

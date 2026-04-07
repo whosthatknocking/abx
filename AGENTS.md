@@ -106,7 +106,9 @@ Keep docs aligned with implementation. If you change config shape, slash command
 - Built-in commands live in `internal/handler/service.go`.
 - Keep slash command semantics predictable and explicit.
 - Session-scoped settings should persist through the repository abstraction, not ad hoc in memory.
+- Status-style local controls such as `/agents status` and `/config` must reflect the implemented runtime/session behavior and remain safe for user-visible output.
 - If a command mutates only agent/session behavior and should respond immediately, ensure the immediate local-control path covers it.
+- Session-scoped controls currently include persona, format, thinking mode, and fallback mode; `/reset` returns those to fresh-session defaults by rotating the active session.
 - If you add or change slash commands, update:
   - handler tests
   - `docs/README.md`

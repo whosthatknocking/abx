@@ -28,7 +28,7 @@
 - **Messaging**: Messaging integration should be transport-agnostic at the architecture level. In v1, `signal-cli` local daemon with JSON-RPC is the primary implementation.
   - In 1:1 chats, respond only when the sender is in `trusted_numbers`
   - In group chats, ignore all messages unless the sender is in `trusted_numbers` and the bot is explicitly mentioned according to Signal mention metadata
-- **Agent**: OpenAI as the primary agent provider (with OpenAI-compatible endpoint support for fallback/local LLMs like Ollama)
+- **Agent**: OpenAI-compatible chat APIs as the primary agent contract, with a native LM Studio `/api/v1/chat` path used for local MCP-enabled endpoints
   - In v1, agent responses must come from the configured model plus locally available conversation context only
   - In v1, external tools for live data retrieval are out of scope
 - **Configuration**: TOML file at `~/.config/abx/config.toml`
@@ -172,6 +172,14 @@ type Repository interface {
     SaveConversationSummary(ctx context.Context, conversationID, sessionID, summary string) error
     GetConversationSummary(ctx context.Context, conversationID, sessionID string) (string, error)
     GetActiveConversationSummary(ctx context.Context, conversationID string) (string, error)
+    SaveSessionPersona(ctx context.Context, conversationID, sessionID, persona string) error
+    GetSessionPersona(ctx context.Context, conversationID, sessionID string) (string, error)
+    SaveSessionFormat(ctx context.Context, conversationID, sessionID, format string) error
+    GetSessionFormat(ctx context.Context, conversationID, sessionID string) (string, error)
+    SaveSessionThinkingMode(ctx context.Context, conversationID, sessionID, mode string) error
+    GetSessionThinkingMode(ctx context.Context, conversationID, sessionID string) (string, error)
+    SaveSessionFallbackDisabled(ctx context.Context, conversationID, sessionID string, disabled bool) error
+    GetSessionFallbackDisabled(ctx context.Context, conversationID, sessionID string) (bool, error)
     RotateConversationSession(ctx context.Context, conversationID string) (string, error)
     SavePendingApproval(ctx context.Context, conversationID, sessionID string, approval PendingApproval) error
     GetPendingApproval(ctx context.Context, conversationID, requestID string) (*PendingApproval, error)
@@ -305,11 +313,12 @@ All project documentation must live under the `docs/` directory. The repository 
   - After restart, `abx` must be able to resume conversation handling from local persisted state.
 
 - **Built-in Control Commands**:
-  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents format`, `/agents fallback`, `/agents switch`, and `/reset`.
+  - The system must support dedicated slash-style commands such as `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents reload`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, and `/reset`.
   - These commands are handled by the application directly and do not require agent inference to route them.
   - `/help` returns a concise summary of the supported message types and built-in commands.
   - `/version` returns the running application version and, if available, build metadata.
   - `/config` returns a safe normalized runtime summary of the active messaging, agent, MCP, storage, and command-policy configuration.
+  - `/agents reload` reloads agent-related configuration from disk for the running process when the runtime supports safe reload.
   - `/agents persona` manages a session-scoped persona instruction that is stored locally and prepended to future agent requests for the active session.
   - `/agents persona` with no argument returns the currently active session persona, if any.
   - `/agents persona <instruction>` stores or replaces the active session persona for that chat session.
@@ -319,17 +328,21 @@ All project documentation must live under the `docs/` directory. The repository 
   - `/agents format` with no argument returns the currently active session format instruction.
   - `/agents format <instruction>` stores or replaces the active session format instruction for that chat session.
   - `/agents format reset` returns the active session format instruction to the default plain-text format.
+  - `/agents thinking` manages a session-scoped thinking override for the active session when thinking control is configured for at least one active agent.
+  - `/agents thinking` with no argument returns whether the session is using the agent default thinking behavior or an explicit enabled or disabled override.
+  - `/agents thinking enable` and `/agents thinking disable` store a transient session override without polluting agent-visible chat history.
+  - `/agents thinking reset` clears the session override and returns to the configured agent default.
   - `/agents fallback` manages a session-scoped fallback setting for agent requests in the active session.
   - `/agents fallback` with no argument returns whether fallback is currently enabled for that session.
   - `/agents fallback disable` disables fallback for future agent requests in that session, so only the primary agent is used.
   - `/agents fallback enable` re-enables fallback for future agent requests in that session.
   - `/agents list` returns the configured primary agent and, when present, the configured fallback agent.
-  - `/agents status` checks whether each configured agent is reachable and returns a bounded live status summary.
+  - `/agents status` checks whether each configured agent is reachable and returns a bounded live status summary that also includes the current session fallback state and, when thinking control is configured, the current session thinking state.
   - `/agents switch` swaps the active primary and fallback agent order for the running process.
   - `/reset` performs a soft reset of the active conversation session for the current chat context.
   - A soft reset must preserve historical records for audit and diagnostics while starting a fresh active conversation context for future agent requests.
   - `/reset` must clear any active pending approval for the current conversation context and archive or detach the previous active summary/history from the new active session.
-  - `/reset` must also clear any active session persona, restore the session format to its default plain-text instruction, and restore session fallback behavior to enabled by virtue of creating a new active session with fresh session-scoped state.
+  - `/reset` must also clear any active session persona, restore the session format to its default plain-text instruction, restore session fallback behavior to enabled, and return session thinking mode to the configured agent default by virtue of creating a new active session with fresh session-scoped state.
   - After `/reset`, the next trusted message in that chat must be handled as the start of a new active conversation session.
   - `/reset` should return a confirmation message such as `Conversation context reset for this chat.`
   - All session-scoped prompt assembly, including normal conversational requests and agent-assisted `/run` command recommendations, must use the same resolved session ID that the inbound message was stored under rather than reloading prompt state from a different active-session pointer later in the request.
@@ -343,12 +356,13 @@ All project documentation must live under the `docs/` directory. The repository 
     6. Optional fallback agent model name
     7. Optional fallback agent contract name
     8. Optional fallback agent request timeout
-    9. MCP enabled/disabled state and enabled MCP server names
-    10. Storage backend name
-    11. Command policy mode
-    12. Command timeout
-    13. Debug enabled/disabled state
-    14. Application version
+    9. Thinking-control configured/not-configured state and effective default mode summary
+    10. MCP enabled/disabled state and enabled MCP server names
+    11. Storage backend name
+    12. Command policy mode
+    13. Command timeout
+    14. Debug enabled/disabled state
+    15. Application version
   - `/config` values should be normalized to their effective runtime values where defaults apply.
   - The fallback section is optional and should be omitted entirely when no fallback agent is configured.
   - In v1, the primary and fallback contract names should describe the agent API contract in use, such as `openai-compatible`, rather than exposing internal locality labels.

@@ -49,6 +49,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - SQLite persistence uses the local `sqlite3` CLI
 - Command execution is deny-by-default and policy-validated at startup
 - Longer conversations are compacted by storing a local summary of older turns and prepending that summary back into the agent prompt alongside a recent history window
+- Session-scoped persona, format, thinking, and fallback overrides are stored through the repository abstraction and reset by rotating to a fresh active session
 - `/version` can include build metadata injected at build time through `make build`
 - Runtime logs now include higher-level interaction tracing for accepted messages, agent request start/end, command proposal creation, approvals, and command execution outcomes
 

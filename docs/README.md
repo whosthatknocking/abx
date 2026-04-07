@@ -27,6 +27,7 @@
 - Inbound Signal image attachments can be forwarded to vision-capable models
 - Automatic conversation summaries for older context in longer chats
 - Built-in control commands: `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents reload`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, `/reset`
+- Session-scoped agent controls for persona, format, thinking, and fallback behavior
 - Unified `/run <command-or-intent>` flow for direct commands or agent-recommended commands
 - Deny-by-default shell execution with explicit allow rules
 - Request-bound approval tokens for command execution

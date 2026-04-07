@@ -27,7 +27,7 @@
 
 - `/help` shows a quick summary of the available message types and built-in commands.
 - Normal questions are sent to the configured agent.
-- `/version`, `/config`, `/agents list`, `/agents status`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, and `/reset` are built-in control commands.
+- `/version`, `/config`, `/agents list`, `/agents status`, `/agents reload`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, and `/reset` are built-in control commands.
 - `/run` shows command usage help.
 - `/run <command-or-intent>` can either:
   - propose an exact shell command directly when the input already looks executable under the current policy
@@ -69,7 +69,7 @@
 
 - `/help`: show a quick summary of supported message types and commands
 - `/version`: show the running application version and build metadata when available
-- `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, MCP visibility, storage, command policy, debug state, and version
+- `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, thinking-control state, MCP visibility, storage, command policy, debug state, and version
 - `/agents list`: show the configured primary and optional fallback agents
 - `/agents status`: check whether the configured agents are reachable, and show the current session fallback and thinking status when configured
 - `/agents reload`: reload agent-related config from disk so updated models and agent settings take effect without restarting the process
@@ -94,5 +94,6 @@
 - A reset also starts a fresh summary/history window for future agent requests in that chat
 - A reset also clears any session-scoped persona because the next session starts fresh
 - A reset also returns the session format to the default plain-text instruction
+- A reset also returns the session thinking mode to the configured agent default
 - A reset also returns session fallback behavior to the default enabled state
 - Previous sessions remain available for audit and diagnostics

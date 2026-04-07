@@ -1484,7 +1484,6 @@ func TestPersonaSetShowAndReset(t *testing.T) {
 
 	ctx := context.Background()
 	conversationID := "direct:+1555"
-
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
 		ConversationID: conversationID,
 		Sender:         "+1555",
@@ -1608,7 +1607,6 @@ func TestPersonaResetStopsOldPersonaFromBeingPrepended(t *testing.T) {
 
 	ctx := context.Background()
 	conversationID := "direct:+1555"
-
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
 		ConversationID: conversationID,
 		Sender:         "+1555",
@@ -1810,6 +1808,10 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 
 	ctx := context.Background()
 	conversationID := "direct:+1555"
+	initialSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get initial session id: %v", err)
+	}
 
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
 		ConversationID: conversationID,
@@ -1831,7 +1833,7 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handle /agents thinking disable: %v", err)
 	}
-	if !strings.Contains(msgs.sent[1], "Thinking disabled for this session.") {
+	if !strings.Contains(msgs.sent[1], "Thinking disabled for this session. Started a fresh session to keep the next prompt clean.") {
 		t.Fatalf("unexpected disable response: %q", msgs.sent[1])
 	}
 	mode, err := repo.GetActiveSessionThinkingMode(ctx, conversationID)
@@ -1840,6 +1842,13 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}
 	if mode != "disabled" {
 		t.Fatalf("expected disabled thinking mode, got %q", mode)
+	}
+	afterDisableSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get session id after disable: %v", err)
+	}
+	if afterDisableSessionID == initialSessionID {
+		t.Fatalf("expected thinking disable to rotate the session")
 	}
 
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
@@ -1850,8 +1859,15 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handle /agents thinking enable: %v", err)
 	}
-	if !strings.Contains(msgs.sent[2], "Thinking enabled for this session.") {
+	if !strings.Contains(msgs.sent[2], "Thinking enabled for this session. Started a fresh session to keep the next prompt clean.") {
 		t.Fatalf("unexpected enable response: %q", msgs.sent[2])
+	}
+	afterEnableSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get session id after enable: %v", err)
+	}
+	if afterEnableSessionID == afterDisableSessionID {
+		t.Fatalf("expected thinking enable to rotate the session")
 	}
 
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
@@ -1862,7 +1878,7 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handle /agents thinking reset: %v", err)
 	}
-	if !strings.Contains(msgs.sent[3], "Thinking mode reset to the agent default for this session.") {
+	if !strings.Contains(msgs.sent[3], "Thinking mode reset to the agent default for this session. Started a fresh session to keep the next prompt clean.") {
 		t.Fatalf("unexpected reset response: %q", msgs.sent[3])
 	}
 	mode, err = repo.GetActiveSessionThinkingMode(ctx, conversationID)
@@ -1871,6 +1887,91 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}
 	if mode != "" {
 		t.Fatalf("expected empty thinking mode after reset, got %q", mode)
+	}
+	afterResetSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get session id after reset: %v", err)
+	}
+	if afterResetSessionID == afterEnableSessionID {
+		t.Fatalf("expected thinking reset to rotate the session")
+	}
+}
+
+func TestThinkingModeRotationPreservesOtherSessionSettings(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{
+					Provider: "openai",
+					Model:    "qwen/qwen3-8b",
+					Thinking: config.ThinkingConfig{
+						ParameterPath: "extra_body.chat_template_kwargs.enable_thinking",
+					},
+				},
+			},
+			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ok"},
+		Executor:  &fakeExecutor{},
+	})
+
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get initial session id: %v", err)
+	}
+	if err := repo.SaveSessionPersona(ctx, conversationID, sessionID, "witty comedian"); err != nil {
+		t.Fatalf("save persona: %v", err)
+	}
+	if err := repo.SaveSessionFormat(ctx, conversationID, sessionID, "markdown"); err != nil {
+		t.Fatalf("save format: %v", err)
+	}
+	if err := repo.SaveSessionFallbackDisabled(ctx, conversationID, sessionID, true); err != nil {
+		t.Fatalf("save fallback disabled: %v", err)
+	}
+
+	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
+		ConversationID: conversationID,
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/agents thinking disable",
+	}); err != nil {
+		t.Fatalf("handle /agents thinking disable: %v", err)
+	}
+
+	nextSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get next session id: %v", err)
+	}
+	if nextSessionID == sessionID {
+		t.Fatalf("expected session rotation after thinking change")
+	}
+	persona, err := repo.GetSessionPersona(ctx, conversationID, nextSessionID)
+	if err != nil {
+		t.Fatalf("get persona: %v", err)
+	}
+	if persona != "witty comedian" {
+		t.Fatalf("expected persona to be preserved, got %q", persona)
+	}
+	format, err := repo.GetSessionFormat(ctx, conversationID, nextSessionID)
+	if err != nil {
+		t.Fatalf("get format: %v", err)
+	}
+	if format != "markdown" {
+		t.Fatalf("expected format to be preserved, got %q", format)
+	}
+	fallbackDisabled, err := repo.GetSessionFallbackDisabled(ctx, conversationID, nextSessionID)
+	if err != nil {
+		t.Fatalf("get fallback disabled: %v", err)
+	}
+	if !fallbackDisabled {
+		t.Fatalf("expected fallback setting to be preserved")
 	}
 }
 

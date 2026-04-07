@@ -705,45 +705,48 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 			}
 			switch normalizeThinkingModeValue(fields[2]) {
 			case "enabled":
-				if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, "enabled"); err != nil {
+				nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "enabled")
+				if err != nil {
 					return err
 				}
 				s.audit(audit.Record{
 					Event:          "control_command",
 					ConversationID: env.ConversationID,
-					SessionID:      sessionID,
+					SessionID:      nextSessionID,
 					Sender:         env.Sender,
 					MessageType:    "control",
 					Decision:       "/agents thinking enable",
 				})
-				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking enabled for this session.")
+				return s.sendAssistant(ctx, env.ConversationID, nextSessionID, env.ChatType, "Thinking enabled for this session. Started a fresh session to keep the next prompt clean.")
 			case "disabled":
-				if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, "disabled"); err != nil {
+				nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "disabled")
+				if err != nil {
 					return err
 				}
 				s.audit(audit.Record{
 					Event:          "control_command",
 					ConversationID: env.ConversationID,
-					SessionID:      sessionID,
+					SessionID:      nextSessionID,
 					Sender:         env.Sender,
 					MessageType:    "control",
 					Decision:       "/agents thinking disable",
 				})
-				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking disabled for this session.")
+				return s.sendAssistant(ctx, env.ConversationID, nextSessionID, env.ChatType, "Thinking disabled for this session. Started a fresh session to keep the next prompt clean.")
 			default:
 				if strings.EqualFold(fields[2], "reset") || strings.EqualFold(fields[2], "default") {
-					if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, ""); err != nil {
+					nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "")
+					if err != nil {
 						return err
 					}
 					s.audit(audit.Record{
 						Event:          "control_command",
 						ConversationID: env.ConversationID,
-						SessionID:      sessionID,
+						SessionID:      nextSessionID,
 						Sender:         env.Sender,
 						MessageType:    "control",
 						Decision:       "/agents thinking reset",
 					})
-					return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Thinking mode reset to the agent default for this session.")
+					return s.sendAssistant(ctx, env.ConversationID, nextSessionID, env.ChatType, "Thinking mode reset to the agent default for this session. Started a fresh session to keep the next prompt clean.")
 				}
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents thinking <enable|disable|reset>")
 			}
@@ -1029,6 +1032,41 @@ func (s *Service) sendAssistantDisplay(ctx context.Context, conversationID, sess
 	return s.messenger.Send(ctx, conversationID, displayText)
 }
 
+func (s *Service) rotateSessionForThinkingChange(ctx context.Context, conversationID, sessionID, thinkingMode string) (string, error) {
+	persona, err := s.repo.GetSessionPersona(ctx, conversationID, sessionID)
+	if err != nil {
+		return "", err
+	}
+	format, err := s.repo.GetSessionFormat(ctx, conversationID, sessionID)
+	if err != nil {
+		return "", err
+	}
+	fallbackDisabled, err := s.repo.GetSessionFallbackDisabled(ctx, conversationID, sessionID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.repo.RotateConversationSession(ctx, conversationID); err != nil {
+		return "", err
+	}
+	nextSessionID, err := s.repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		return "", err
+	}
+	if err := s.repo.SaveSessionPersona(ctx, conversationID, nextSessionID, persona); err != nil {
+		return "", err
+	}
+	if err := s.repo.SaveSessionFormat(ctx, conversationID, nextSessionID, format); err != nil {
+		return "", err
+	}
+	if err := s.repo.SaveSessionFallbackDisabled(ctx, conversationID, nextSessionID, fallbackDisabled); err != nil {
+		return "", err
+	}
+	if err := s.repo.SaveSessionThinkingMode(ctx, conversationID, nextSessionID, thinkingMode); err != nil {
+		return "", err
+	}
+	return nextSessionID, nil
+}
+
 func (s *Service) shellRequest(text string) (string, bool) {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "/run ") {
@@ -1158,6 +1196,9 @@ func (s *Service) agentsListText() string {
 
 func (s *Service) chatWithSessionAgent(ctx context.Context, conversationID string, messages []types.Message, tools []types.Tool, fallbackDisabled bool, thinkingMode string) (types.AgentResponse, error) {
 	runtimeAgent := s.runtimeAgent()
+	if line := s.debugThinkingLogLine(thinkingMode); line != "" {
+		s.logger.Printf("%s", line)
+	}
 	options := types.AgentOptions{
 		Thinking: thinkingModeOption(thinkingMode),
 	}
@@ -1822,6 +1863,31 @@ func normalizedDebugState(cfg *config.Config) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+func (s *Service) debugThinkingLogLine(thinkingMode string) string {
+	cfg := s.runtimeConfig()
+	if cfg == nil || !cfg.Debug.Enabled {
+		return ""
+	}
+	provider := cfg.Agent.Primary
+	resolvedMode := normalizeThinkingModeValue(thinkingMode)
+	if resolvedMode == "" {
+		resolvedMode = normalizeThinkingModeValue(provider.Thinking.DefaultMode)
+	}
+	if resolvedMode == "" {
+		resolvedMode = "default"
+	}
+	systemPromptConfigured := strings.TrimSpace(provider.Thinking.EnableSystemPrompt) != "" ||
+		strings.TrimSpace(provider.Thinking.DisableSystemPrompt) != ""
+	enableTokenInjected := resolvedMode == "enabled" && strings.TrimSpace(provider.Thinking.EnableSystemPrompt) != ""
+	return fmt.Sprintf(
+		"debug thinking control model=%s mode=%s system_prompt_configured=%t enable_token_injected=%t",
+		strings.TrimSpace(provider.Model),
+		resolvedMode,
+		systemPromptConfigured,
+		enableTokenInjected,
+	)
 }
 
 func normalizedThinkingState(cfg *config.Config) string {

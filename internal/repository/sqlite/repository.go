@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS messages (
   kind TEXT NOT NULL,
   chat_type TEXT NOT NULL,
   text TEXT NOT NULL,
+  attachments_json TEXT NOT NULL DEFAULT '[]',
   mentioned_bot INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -86,7 +87,10 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
 	if err := r.ensureSessionThinkingModeColumn(); err != nil {
 		return err
 	}
-	return r.ensureSessionFallbackDisabledColumn()
+	if err := r.ensureSessionFallbackDisabledColumn(); err != nil {
+		return err
+	}
+	return r.ensureMessageAttachmentsColumn()
 }
 
 func (r *Repository) SaveMessage(_ context.Context, conversationID, sessionID string, msg types.Message) error {
@@ -104,10 +108,10 @@ func (r *Repository) SaveMessage(_ context.Context, conversationID, sessionID st
 		return err
 	}
 	sql := fmt.Sprintf(`INSERT OR REPLACE INTO messages
-		(id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, mentioned_bot, created_at)
-		VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%s);`,
+		(id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, attachments_json, mentioned_bot, created_at)
+		VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%s);`,
 		q(msg.ID), q(conversationID), q(sessionID), q(msg.Sender), q(msg.Recipient), q(string(msg.Role)),
-		q(string(msg.Kind)), q(string(msg.ChatType)), q(msg.Text), boolInt(msg.MentionedBot), q(msg.CreatedAt.Format(timeLayout)))
+		q(string(msg.Kind)), q(string(msg.ChatType)), q(msg.Text), q(attachmentsJSON(msg.Attachments)), boolInt(msg.MentionedBot), q(msg.CreatedAt.Format(timeLayout)))
 	_, err := r.exec(sql)
 	return err
 }
@@ -130,9 +134,9 @@ func (r *Repository) GetHistory(_ context.Context, conversationID, sessionID str
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := r.query(fmt.Sprintf(`SELECT id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, mentioned_bot, created_at
+	rows, err := r.query(fmt.Sprintf(`SELECT id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, attachments_json, mentioned_bot, created_at
 		FROM (
-			SELECT id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, mentioned_bot, created_at
+			SELECT id, conversation_id, session_id, sender, recipient, role, kind, chat_type, text, attachments_json, mentioned_bot, created_at
 			FROM messages
 			WHERE conversation_id = %s AND session_id = %s
 			ORDER BY datetime(created_at) DESC
@@ -444,6 +448,20 @@ func (r *Repository) ensureSessionFallbackDisabledColumn() error {
 	return err
 }
 
+func (r *Repository) ensureMessageAttachmentsColumn() error {
+	rows, err := r.query(`PRAGMA table_info(messages);`)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if stringField(row, "name") == "attachments_json" {
+			return nil
+		}
+	}
+	_, err = r.exec(`ALTER TABLE messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';`)
+	return err
+}
+
 func (r *Repository) exec(sql string) (string, error) {
 	cmd := exec.Command("sqlite3", r.dsn, sql)
 	out, err := cmd.CombinedOutput()
@@ -519,9 +537,33 @@ func decodeMessage(row map[string]any) types.Message {
 		Kind:           types.MessageKind(stringField(row, "kind")),
 		ChatType:       types.ChatType(stringField(row, "chat_type")),
 		Text:           stringField(row, "text"),
+		Attachments:    decodeAttachments(stringField(row, "attachments_json")),
 		MentionedBot:   stringField(row, "mentioned_bot") == "1",
 		CreatedAt:      createdAt,
 	}
+}
+
+func attachmentsJSON(attachments []types.Attachment) string {
+	if len(attachments) == 0 {
+		return "[]"
+	}
+	raw, err := json.Marshal(attachments)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
+func decodeAttachments(raw string) []types.Attachment {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var attachments []types.Attachment
+	if err := json.Unmarshal([]byte(raw), &attachments); err != nil {
+		return nil
+	}
+	return attachments
 }
 
 func decodeApproval(row map[string]any) types.PendingApproval {

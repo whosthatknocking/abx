@@ -3,10 +3,12 @@ package openai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -264,11 +266,11 @@ func (p *Provider) chatRequestBody(messages []types.Message, options types.Agent
 	messages = p.applyThinkingMessages(messages, options)
 	if p.usesNativeLMStudioChat() {
 		// LM Studio's native MCP-aware endpoint accepts a single transcript string
-		// plus integrations, not OpenAI-style role/content messages.
+		// plus integrations, with optional image items for user attachments.
 		transcriptMessages := p.applyThinkingSystemMessages(p.withMCPSystemPrompt(messages), options)
 		body := map[string]any{
 			"model":        p.cfg.Model,
-			"input":        toLMStudioInput(transcriptMessages),
+			"input":        p.toLMStudioInputItems(transcriptMessages),
 			"integrations": append([]string(nil), p.cfg.Integrations...),
 			"store":        false,
 		}
@@ -278,7 +280,7 @@ func (p *Provider) chatRequestBody(messages []types.Message, options types.Agent
 	messages = p.applyThinkingSystemMessages(messages, options)
 	body := map[string]any{
 		"model":    p.cfg.Model,
-		"messages": toChatMessages(messages),
+		"messages": p.toChatMessages(messages),
 	}
 	p.applyThinkingRequestBody(body, options)
 	return body
@@ -351,19 +353,48 @@ func (p *Provider) mcpSystemPrompt() string {
 	)
 }
 
-func toChatMessages(messages []types.Message) []map[string]string {
-	out := make([]map[string]string, 0, len(messages))
+func (p *Provider) toChatMessages(messages []types.Message) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
 		role := string(msg.Role)
 		if role == "" {
 			role = string(types.RoleUser)
 		}
-		out = append(out, map[string]string{
+		out = append(out, map[string]any{
 			"role":    role,
-			"content": msg.Text,
+			"content": p.chatMessageContent(msg),
 		})
 	}
 	return out
+}
+
+func (p *Provider) chatMessageContent(msg types.Message) any {
+	if len(msg.Attachments) == 0 {
+		return msg.Text
+	}
+	parts := make([]map[string]any, 0, 1+len(msg.Attachments))
+	if text := strings.TrimSpace(msg.Text); text != "" {
+		parts = append(parts, map[string]any{
+			"type": "text",
+			"text": text,
+		})
+	}
+	for _, attachment := range msg.Attachments {
+		dataURL, ok := attachmentDataURL(attachment)
+		if !ok {
+			continue
+		}
+		parts = append(parts, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": dataURL,
+			},
+		})
+	}
+	if len(parts) == 0 {
+		return msg.Text
+	}
+	return parts
 }
 
 func toLMStudioInput(messages []types.Message) string {
@@ -383,12 +414,96 @@ func toLMStudioInput(messages []types.Message) string {
 			label = "Assistant"
 		}
 		text := strings.TrimSpace(msg.Text)
+		if attachmentText := lmStudioAttachmentText(msg.Attachments); attachmentText != "" {
+			if text == "" {
+				text = attachmentText
+			} else {
+				text += "\n" + attachmentText
+			}
+		}
 		if text == "" {
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s: %s", label, text))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func (p *Provider) toLMStudioInputItems(messages []types.Message) any {
+	lastUserImages := p.lastUserImageAttachments(messages)
+	input := toLMStudioInput(messages)
+	if len(lastUserImages) == 0 {
+		return input
+	}
+	items := make([]map[string]any, 0, 1+len(lastUserImages))
+	if strings.TrimSpace(input) != "" {
+		items = append(items, map[string]any{
+			"type":    "message",
+			"content": input,
+		})
+	}
+	for _, attachment := range lastUserImages {
+		dataURL, ok := attachmentDataURL(attachment)
+		if !ok {
+			continue
+		}
+		items = append(items, map[string]any{
+			"type":     "image",
+			"data_url": dataURL,
+		})
+	}
+	if len(items) == 0 {
+		return input
+	}
+	return items
+}
+
+func (p *Provider) lastUserImageAttachments(messages []types.Message) []types.Attachment {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != types.RoleUser {
+			continue
+		}
+		out := make([]types.Attachment, 0, len(messages[i].Attachments))
+		for _, attachment := range messages[i].Attachments {
+			if strings.EqualFold(strings.TrimSpace(attachment.Kind), "image") {
+				out = append(out, attachment)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func lmStudioAttachmentText(attachments []types.Attachment) string {
+	count := 0
+	for _, attachment := range attachments {
+		if strings.EqualFold(strings.TrimSpace(attachment.Kind), "image") {
+			count++
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	if count == 1 {
+		return "[Attached image]"
+	}
+	return fmt.Sprintf("[Attached %d images]", count)
+}
+
+func attachmentDataURL(attachment types.Attachment) (string, bool) {
+	contentType := strings.TrimSpace(attachment.ContentType)
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		return "", false
+	}
+	filePath := strings.TrimSpace(attachment.FilePath)
+	if filePath == "" {
+		return "", false
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", false
+	}
+	return "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(raw), true
 }
 
 func (p *Provider) applyThinkingSystemMessages(messages []types.Message, options types.AgentOptions) []types.Message {

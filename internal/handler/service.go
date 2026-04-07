@@ -138,6 +138,9 @@ func (s *Service) handleMessage(ctx context.Context, env types.IncomingEnvelope)
 	}
 	text := effectiveIncomingText(env)
 	s.logger.Printf("interaction accepted conversation=%s sender=%s chat_type=%s mentioned=%t text_len=%d", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot, len(strings.TrimSpace(text)))
+	if line := s.debugInboundAttachmentLogLine(env); line != "" {
+		s.logger.Printf("%s", line)
+	}
 
 	sessionID, err := s.repo.GetActiveSessionID(ctx, env.ConversationID)
 	if err != nil {
@@ -153,6 +156,7 @@ func (s *Service) handleMessage(ctx context.Context, env types.IncomingEnvelope)
 		Kind:           types.MessageKindInbound,
 		ChatType:       env.ChatType,
 		Text:           text,
+		Attachments:    append([]types.Attachment(nil), env.Attachments...),
 		MentionedBot:   env.MentionedBot,
 		CreatedAt:      coalesceTime(env.CreatedAt, time.Now()),
 	}
@@ -1372,7 +1376,7 @@ func summarizeMessages(messages []types.Message, maxChars int) string {
 
 	var b strings.Builder
 	for _, msg := range sorted {
-		text := strings.TrimSpace(msg.Text)
+		text := summarizeMessageContent(msg)
 		if text == "" {
 			continue
 		}
@@ -1409,6 +1413,28 @@ func roleLabel(role types.Role) string {
 
 func compactWhitespace(text string) string {
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func summarizeMessageContent(msg types.Message) string {
+	text := strings.TrimSpace(msg.Text)
+	imageCount := 0
+	for _, attachment := range msg.Attachments {
+		if strings.EqualFold(strings.TrimSpace(attachment.Kind), "image") {
+			imageCount++
+		}
+	}
+	if imageCount == 0 {
+		return text
+	}
+	imageText := fmt.Sprintf("[attached %d image", imageCount)
+	if imageCount != 1 {
+		imageText += "s"
+	}
+	imageText += "]"
+	if text == "" {
+		return imageText
+	}
+	return text + "\n" + imageText
 }
 
 func normalizePersona(text string) string {
@@ -1836,6 +1862,28 @@ func normalizedDebugState(cfg *config.Config) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+func (s *Service) debugInboundAttachmentLogLine(env types.IncomingEnvelope) string {
+	cfg := s.runtimeConfig()
+	if cfg == nil || !cfg.Debug.Enabled {
+		return ""
+	}
+	imageCount := 0
+	for _, attachment := range env.Attachments {
+		if strings.EqualFold(strings.TrimSpace(attachment.Kind), "image") {
+			imageCount++
+		}
+	}
+	if imageCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"debug inbound attachments conversation=%s sender=%s images=%d",
+		env.ConversationID,
+		env.Sender,
+		imageCount,
+	)
 }
 
 func (s *Service) debugThinkingLogLine(thinkingMode string) string {

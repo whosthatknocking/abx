@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -146,12 +147,47 @@ func TestChatRequestBodyAppliesThinkingSuffix(t *testing.T) {
 		Text: "hello",
 	}}, types.AgentOptions{Thinking: boolPtr(false)})
 
-	messages, ok := body["messages"].([]map[string]string)
+	messages, ok := body["messages"].([]map[string]any)
 	if !ok || len(messages) != 1 {
 		t.Fatalf("expected chat messages, got %#v", body["messages"])
 	}
-	if got := messages[0]["content"]; !strings.Contains(got, "/nothink") {
+	if got, _ := messages[0]["content"].(string); !strings.Contains(got, "/nothink") {
 		t.Fatalf("expected /nothink suffix in %q", got)
+	}
+}
+
+func TestChatRequestBodyIncludesImageAttachments(t *testing.T) {
+	dir := t.TempDir()
+	imagePath := dir + "/image.png"
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4e, 0x47}, 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	provider := New(config.ProviderConfig{
+		BaseURL: "https://api.example.test/v1",
+		Model:   "gpt-4o-mini",
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "what is in this image?",
+		Attachments: []types.Attachment{{
+			Kind:        "image",
+			ContentType: "image/png",
+			FilePath:    imagePath,
+		}},
+	}}, types.AgentOptions{})
+
+	messages, ok := body["messages"].([]map[string]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected chat messages, got %#v", body["messages"])
+	}
+	content, ok := messages[0]["content"].([]map[string]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("expected multimodal content, got %#v", messages[0]["content"])
+	}
+	if content[1]["type"] != "image_url" {
+		t.Fatalf("expected image_url content part, got %#v", content[1])
 	}
 }
 
@@ -169,7 +205,7 @@ func TestChatRequestBodyAppliesThinkingSystemPrompt(t *testing.T) {
 		Text: "hello",
 	}}, types.AgentOptions{Thinking: boolPtr(true)})
 
-	messages, ok := body["messages"].([]map[string]string)
+	messages, ok := body["messages"].([]map[string]any)
 	if !ok || len(messages) != 2 {
 		t.Fatalf("expected system and user chat messages, got %#v", body["messages"])
 	}
@@ -192,11 +228,11 @@ func TestChatRequestBodyPrependsThinkingSystemPromptToExistingSystemMessage(t *t
 		{Role: types.RoleUser, Text: "hello"},
 	}, types.AgentOptions{Thinking: boolPtr(true)})
 
-	messages, ok := body["messages"].([]map[string]string)
+	messages, ok := body["messages"].([]map[string]any)
 	if !ok || len(messages) != 2 {
 		t.Fatalf("expected chat messages, got %#v", body["messages"])
 	}
-	if got := messages[0]["content"]; got != "<|think|>\n\nKeep replies concise." {
+	if got, _ := messages[0]["content"].(string); got != "<|think|>\n\nKeep replies concise." {
 		t.Fatalf("expected thinking prompt to prefix system message, got %q", got)
 	}
 }
@@ -245,6 +281,38 @@ func TestNativeLMStudioChatAppliesReasoningToggle(t *testing.T) {
 
 	if value, ok := body["reasoning"].(string); !ok || value != "off" {
 		t.Fatalf("expected native LM Studio reasoning=off, got %#v", body["reasoning"])
+	}
+}
+
+func TestNativeLMStudioChatIncludesLatestUserImages(t *testing.T) {
+	dir := t.TempDir()
+	imagePath := dir + "/image.png"
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4e, 0x47}, 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	provider := New(config.ProviderConfig{
+		BaseURL:      "http://127.0.0.1:1234/v1",
+		Model:        "google/gemma-4-e4b",
+		Integrations: []string{"mcp/playwright"},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "describe this",
+		Attachments: []types.Attachment{{
+			Kind:        "image",
+			ContentType: "image/png",
+			FilePath:    imagePath,
+		}},
+	}}, types.AgentOptions{})
+
+	input, ok := body["input"].([]map[string]any)
+	if !ok || len(input) != 2 {
+		t.Fatalf("expected LM Studio input items, got %#v", body["input"])
+	}
+	if input[1]["type"] != "image" {
+		t.Fatalf("expected image input item, got %#v", input[1])
 	}
 }
 

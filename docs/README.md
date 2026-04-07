@@ -15,6 +15,7 @@
 - The project currently provides a working local scaffold for config loading, session persistence, approval handling, command policy enforcement, and agent-backed conversational responses.
 - The first messaging implementation is `signal-cli` JSON-RPC, with reconnect handling, direct/group send routing, JSON-RPC response handling, and compatibility fallback for daemons that do not implement `subscribe`.
 - The Signal transport still needs broader real-world validation against additional `signal-cli` event shapes and deployment environments.
+- Signal image handling depends on the inbound `signal-cli` event including a local stored attachment filename for image media.
 
 ## Features
 
@@ -23,6 +24,7 @@
 - Group-chat activation via transport metadata in v1 (`signal-cli` Signal mention metadata)
 - Built-in slash commands and `/run` behave the same in direct and group chat once the bot is explicitly mentioned in the group
 - Conversational agent responses from local context only
+- Inbound Signal image attachments can be forwarded to vision-capable models
 - Automatic conversation summaries for older context in longer chats
 - Built-in control commands: `/help`, `/version`, `/config`, `/agents list`, `/agents status`, `/agents reload`, `/agents persona`, `/agents format`, `/agents thinking`, `/agents fallback`, `/agents switch`, `/reset`
 - Unified `/run <command-or-intent>` flow for direct commands or agent-recommended commands
@@ -108,5 +110,6 @@ rpc_port = 7583
 
 - v1 is file-configured only.
 - Conversational answers come from model context only; live external lookups are disabled in v1.
+- Signal image messages are currently inbound-only; `abx` does not send generated images or other media back through Signal in v1.
 - Longer conversations use a local summary of older turns plus a recent message window to keep useful context without sending the full transcript every time.
 - Shell execution is deny-by-default and must match an explicit allow rule.

@@ -249,6 +249,42 @@ func TestDecodeEnvelopeFromRPCGroupApprovalNormalizesMentionPrefix(t *testing.T)
 	}
 }
 
+func TestDecodeEnvelopeFromRPCImageOnlyMessage(t *testing.T) {
+	payload := mustRPCMessage(t, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "receive",
+		"params": map[string]any{
+			"envelope": map[string]any{
+				"sourceNumber": "+15551230000",
+				"timestamp":    1710000000000,
+				"dataMessage": map[string]any{
+					"attachments": []any{
+						map[string]any{
+							"contentType":    "image/png",
+							"storedFilename": "/tmp/image.png",
+							"filename":       "image.png",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	if !ok {
+		t.Fatal("expected image-only envelope to decode")
+	}
+	if got.Text != "" {
+		t.Fatalf("expected empty text for image-only message, got %q", got.Text)
+	}
+	if len(got.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %#v", got.Attachments)
+	}
+	if got.Attachments[0].FilePath != "/tmp/image.png" || got.Attachments[0].ContentType != "image/png" {
+		t.Fatalf("unexpected attachment %#v", got.Attachments[0])
+	}
+}
+
 func TestSplitOutgoingMessageLeavesShortMessageUntouched(t *testing.T) {
 	got := splitOutgoingMessage("hello", 10)
 	if len(got) != 1 || got[0] != "hello" {

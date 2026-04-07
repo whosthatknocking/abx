@@ -185,6 +185,7 @@ func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEn
 	if messageText == "" {
 		messageText = stringField(envelope, "message")
 	}
+	attachments := imageAttachments(dataMessage)
 	groupInfo := childMap(dataMessage, "groupInfo")
 	chatType := types.ChatTypeDirect
 	conversationID := "direct:" + stringField(envelope, "sourceNumber")
@@ -194,7 +195,7 @@ func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEn
 			conversationID = "group:" + groupID
 		}
 	}
-	if messageText == "" || conversationID == "" {
+	if (messageText == "" && len(attachments) == 0) || conversationID == "" {
 		return types.IncomingEnvelope{}, false
 	}
 	messageText = strings.TrimSpace(messageText)
@@ -206,10 +207,54 @@ func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEn
 		Recipient:      account,
 		ChatType:       chatType,
 		Text:           messageText,
+		Attachments:    attachments,
 		NormalizedText: normalizeGroupRoutingText(messageText, chatType, isMentioned),
 		MentionedBot:   isMentioned,
 		CreatedAt:      envelopeTimestamp(envelope),
 	}, true
+}
+
+func imageAttachments(dataMessage map[string]any) []types.Attachment {
+	items, ok := dataMessage["attachments"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]types.Attachment, 0, len(items))
+	for _, item := range items {
+		attachment, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		contentType := strings.TrimSpace(stringField(attachment, "contentType"))
+		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+			continue
+		}
+		filePath := firstNonEmptyString(
+			stringField(attachment, "storedFilename"),
+			stringField(attachment, "file"),
+			stringField(attachment, "path"),
+		)
+		if filePath == "" {
+			continue
+		}
+		out = append(out, types.Attachment{
+			Kind:        "image",
+			ContentType: contentType,
+			FilePath:    filePath,
+			FileName:    firstNonEmptyString(stringField(attachment, "filename"), stringField(attachment, "storedFilename")),
+		})
+	}
+	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func normalizeGroupRoutingText(text string, chatType types.ChatType, mentionedBot bool) string {

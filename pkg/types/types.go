@@ -34,8 +34,16 @@ type Message struct {
 	Kind           MessageKind
 	ChatType       ChatType
 	Text           string
+	Attachments    []Attachment
 	MentionedBot   bool
 	CreatedAt      time.Time
+}
+
+type Attachment struct {
+	Kind        string
+	ContentType string
+	FilePath    string
+	FileName    string
 }
 
 type Tool struct {
@@ -77,6 +85,7 @@ type IncomingEnvelope struct {
 	Recipient      string
 	ChatType       ChatType
 	Text           string
+	Attachments    []Attachment
 	NormalizedText string
 	MentionedBot   bool
 	CreatedAt      time.Time

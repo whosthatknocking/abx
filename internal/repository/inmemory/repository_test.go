@@ -155,3 +155,44 @@ func TestPendingApprovalLifecycle(t *testing.T) {
 		t.Fatalf("expected no active approval after clear, got %#v", active)
 	}
 }
+
+func TestMessageAttachmentsRoundTrip(t *testing.T) {
+	repo := New().(*Repository)
+	ctx := context.Background()
+	conversationID := "direct:+1555"
+	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("get active session id: %v", err)
+	}
+
+	msg := types.Message{
+		ID:             "m1",
+		ConversationID: conversationID,
+		SessionID:      sessionID,
+		Sender:         "+1555",
+		Role:           types.RoleUser,
+		Kind:           types.MessageKindInbound,
+		ChatType:       types.ChatTypeDirect,
+		Attachments: []types.Attachment{{
+			Kind:        "image",
+			ContentType: "image/png",
+			FilePath:    "/tmp/test.png",
+			FileName:    "test.png",
+		}},
+		CreatedAt: time.Now(),
+	}
+	if err := repo.SaveMessage(ctx, conversationID, sessionID, msg); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	history, err := repo.GetHistory(ctx, conversationID, sessionID, 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 1 || len(history[0].Attachments) != 1 {
+		t.Fatalf("unexpected history %#v", history)
+	}
+	if history[0].Attachments[0].FilePath != "/tmp/test.png" {
+		t.Fatalf("unexpected attachment %#v", history[0].Attachments[0])
+	}
+}

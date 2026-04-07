@@ -81,6 +81,13 @@
 - `/reset`: start a fresh active session for the current chat while preserving historical state
 - In group chat, prefix these commands by mentioning the bot in the same message; after mention normalization they follow the same local control flow as in direct chat.
 
+## Images
+
+- If a trusted sender sends a Signal message with image attachments, `abx` can forward those images to a vision-capable model together with the message text.
+- Image-only messages are supported.
+- This currently depends on `signal-cli` exposing a stored local filename for the image attachment in the inbound JSON-RPC event.
+- `abx` does not send generated images or media attachments back to Signal in v1; outbound replies remain text-only.
+
 ## Resetting Context
 
 - Send `/reset` to soft-reset the active session

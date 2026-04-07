@@ -717,7 +717,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 					MessageType:    "control",
 					Decision:       "/agents thinking enable",
 				})
-				return s.sendAssistant(ctx, env.ConversationID, nextSessionID, env.ChatType, "Thinking enabled for this session. Started a fresh session to keep the next prompt clean.")
+				return s.sendAssistantTransient(ctx, env.ConversationID, nextSessionID, "Thinking enabled for this session. Started a fresh session to keep the next prompt clean.")
 			case "disabled":
 				nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "disabled")
 				if err != nil {
@@ -731,7 +731,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 					MessageType:    "control",
 					Decision:       "/agents thinking disable",
 				})
-				return s.sendAssistant(ctx, env.ConversationID, nextSessionID, env.ChatType, "Thinking disabled for this session. Started a fresh session to keep the next prompt clean.")
+				return s.sendAssistantTransient(ctx, env.ConversationID, nextSessionID, "Thinking disabled for this session. Started a fresh session to keep the next prompt clean.")
 			default:
 				if strings.EqualFold(fields[2], "reset") || strings.EqualFold(fields[2], "default") {
 					nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "")
@@ -746,7 +746,7 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 						MessageType:    "control",
 						Decision:       "/agents thinking reset",
 					})
-					return s.sendAssistant(ctx, env.ConversationID, nextSessionID, env.ChatType, "Thinking mode reset to the agent default for this session. Started a fresh session to keep the next prompt clean.")
+					return s.sendAssistantTransient(ctx, env.ConversationID, nextSessionID, "Thinking mode reset to the agent default for this session. Started a fresh session to keep the next prompt clean.")
 				}
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents thinking <enable|disable|reset>")
 			}
@@ -1006,6 +1006,17 @@ func (s *Service) handleReadOnlyControlMaybe(ctx context.Context, env types.Inco
 
 func (s *Service) sendAssistant(ctx context.Context, conversationID, sessionID string, chatType types.ChatType, text string) error {
 	return s.sendAssistantDisplay(ctx, conversationID, sessionID, chatType, text, text)
+}
+
+func (s *Service) sendAssistantTransient(ctx context.Context, conversationID, sessionID string, text string) error {
+	s.audit(audit.Record{
+		Event:          "message_sent",
+		ConversationID: conversationID,
+		SessionID:      sessionID,
+		MessageType:    "outbound",
+		Output:         text,
+	})
+	return s.messenger.Send(ctx, conversationID, text)
 }
 
 func (s *Service) sendAssistantDisplay(ctx context.Context, conversationID, sessionID string, chatType types.ChatType, storedText, displayText string) error {

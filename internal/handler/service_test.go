@@ -1850,6 +1850,13 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	if afterDisableSessionID == initialSessionID {
 		t.Fatalf("expected thinking disable to rotate the session")
 	}
+	history, err := repo.GetHistory(ctx, conversationID, afterDisableSessionID, 10)
+	if err != nil {
+		t.Fatalf("get history after disable: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("expected thinking disable confirmation to stay out of stored history, got %#v", history)
+	}
 
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
 		ConversationID: conversationID,
@@ -1972,6 +1979,13 @@ func TestThinkingModeRotationPreservesOtherSessionSettings(t *testing.T) {
 	}
 	if !fallbackDisabled {
 		t.Fatalf("expected fallback setting to be preserved")
+	}
+	history, err := repo.GetHistory(ctx, conversationID, nextSessionID, 10)
+	if err != nil {
+		t.Fatalf("get history for rotated session: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("expected no stored confirmation in rotated session history, got %#v", history)
 	}
 }
 

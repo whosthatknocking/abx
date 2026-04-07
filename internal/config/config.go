@@ -63,10 +63,12 @@ type ProviderConfig struct {
 }
 
 type ThinkingConfig struct {
-	DefaultMode   string
-	ParameterPath string
-	EnableSuffix  string
-	DisableSuffix string
+	DefaultMode         string
+	ParameterPath       string
+	EnableSuffix        string
+	DisableSuffix       string
+	EnableSystemPrompt  string
+	DisableSystemPrompt string
 }
 
 type SecurityConfig struct {
@@ -222,6 +224,8 @@ func (c *ThinkingConfig) normalize() {
 	c.ParameterPath = strings.TrimSpace(c.ParameterPath)
 	c.EnableSuffix = strings.TrimSpace(c.EnableSuffix)
 	c.DisableSuffix = strings.TrimSpace(c.DisableSuffix)
+	c.EnableSystemPrompt = strings.TrimSpace(c.EnableSystemPrompt)
+	c.DisableSystemPrompt = strings.TrimSpace(c.DisableSystemPrompt)
 }
 
 func normalizeThinkingMode(value string) string {

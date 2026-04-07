@@ -93,6 +93,14 @@ func decodeProvider(m map[string]any) ProviderConfig {
 	if disableSuffix == "" {
 		disableSuffix = stringValue(thinking, "disable_suffix")
 	}
+	enableSystemPrompt := stringValue(m, "thinking_enable_system_prompt")
+	if enableSystemPrompt == "" {
+		enableSystemPrompt = stringValue(thinking, "enable_system_prompt")
+	}
+	disableSystemPrompt := stringValue(m, "thinking_disable_system_prompt")
+	if disableSystemPrompt == "" {
+		disableSystemPrompt = stringValue(thinking, "disable_system_prompt")
+	}
 	return ProviderConfig{
 		Provider:              stringValue(m, "provider"),
 		APIKey:                stringValue(m, "api_key"),
@@ -100,10 +108,12 @@ func decodeProvider(m map[string]any) ProviderConfig {
 		BaseURL:               stringValue(m, "base_url"),
 		RequestTimeoutSeconds: intValue(m, "request_timeout_seconds"),
 		Thinking: ThinkingConfig{
-			DefaultMode:   defaultMode,
-			ParameterPath: parameterPath,
-			EnableSuffix:  enableSuffix,
-			DisableSuffix: disableSuffix,
+			DefaultMode:         defaultMode,
+			ParameterPath:       parameterPath,
+			EnableSuffix:        enableSuffix,
+			DisableSuffix:       disableSuffix,
+			EnableSystemPrompt:  enableSystemPrompt,
+			DisableSystemPrompt: disableSystemPrompt,
 		},
 	}
 }

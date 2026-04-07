@@ -1853,6 +1853,8 @@ func thinkingConfigured(provider config.ProviderConfig) bool {
 	return strings.TrimSpace(provider.Thinking.ParameterPath) != "" ||
 		strings.TrimSpace(provider.Thinking.EnableSuffix) != "" ||
 		strings.TrimSpace(provider.Thinking.DisableSuffix) != "" ||
+		strings.TrimSpace(provider.Thinking.EnableSystemPrompt) != "" ||
+		strings.TrimSpace(provider.Thinking.DisableSystemPrompt) != "" ||
 		strings.TrimSpace(provider.Thinking.DefaultMode) != ""
 }
 

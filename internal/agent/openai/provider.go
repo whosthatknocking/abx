@@ -265,7 +265,7 @@ func (p *Provider) chatRequestBody(messages []types.Message, options types.Agent
 	if p.usesNativeLMStudioChat() {
 		// LM Studio's native MCP-aware endpoint accepts a single transcript string
 		// plus integrations, not OpenAI-style role/content messages.
-		transcriptMessages := p.withMCPSystemPrompt(messages)
+		transcriptMessages := p.applyThinkingSystemMessages(p.withMCPSystemPrompt(messages), options)
 		body := map[string]any{
 			"model":        p.cfg.Model,
 			"input":        toLMStudioInput(transcriptMessages),
@@ -274,6 +274,7 @@ func (p *Provider) chatRequestBody(messages []types.Message, options types.Agent
 		}
 		return body
 	}
+	messages = p.applyThinkingSystemMessages(messages, options)
 	body := map[string]any{
 		"model":    p.cfg.Model,
 		"messages": toChatMessages(messages),
@@ -389,6 +390,27 @@ func toLMStudioInput(messages []types.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
+func (p *Provider) applyThinkingSystemMessages(messages []types.Message, options types.AgentOptions) []types.Message {
+	prompt := p.thinkingSystemPrompt(options)
+	if prompt == "" {
+		return append([]types.Message(nil), messages...)
+	}
+	out := append([]types.Message(nil), messages...)
+	for i := range out {
+		if out[i].Role != types.RoleSystem {
+			continue
+		}
+		text := strings.TrimSpace(out[i].Text)
+		if text == "" {
+			out[i].Text = prompt
+		} else if !strings.HasPrefix(text, prompt) {
+			out[i].Text = prompt + "\n\n" + text
+		}
+		return out
+	}
+	return append([]types.Message{{Role: types.RoleSystem, Text: prompt}}, out...)
+}
+
 func firstIntegrationName(integrations []string) string {
 	for _, name := range integrations {
 		name = strings.TrimSpace(name)
@@ -443,6 +465,17 @@ func (p *Provider) thinkingSuffix(options types.AgentOptions) string {
 		return strings.TrimSpace(p.cfg.Thinking.EnableSuffix)
 	}
 	return strings.TrimSpace(p.cfg.Thinking.DisableSuffix)
+}
+
+func (p *Provider) thinkingSystemPrompt(options types.AgentOptions) string {
+	value, ok := p.thinkingValue(options)
+	if !ok {
+		return ""
+	}
+	if value {
+		return strings.TrimSpace(p.cfg.Thinking.EnableSystemPrompt)
+	}
+	return strings.TrimSpace(p.cfg.Thinking.DisableSystemPrompt)
 }
 
 func (p *Provider) thinkingValue(options types.AgentOptions) (bool, bool) {

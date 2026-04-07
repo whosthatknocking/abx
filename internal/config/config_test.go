@@ -110,6 +110,8 @@ thinking_default = "enabled"
 thinking_parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
 thinking_enable_suffix = "/think"
 thinking_disable_suffix = "/no_think"
+thinking_enable_system_prompt = "<|think|>"
+thinking_disable_system_prompt = "<|no_think|>"
 
 [security]
 trusted_numbers = ["+1"]
@@ -153,6 +155,12 @@ description = "test"
 	if cfg.Agent.Primary.Thinking.DisableSuffix != "/no_think" {
 		t.Fatalf("unexpected thinking disable suffix %q", cfg.Agent.Primary.Thinking.DisableSuffix)
 	}
+	if cfg.Agent.Primary.Thinking.EnableSystemPrompt != "<|think|>" {
+		t.Fatalf("unexpected thinking enable system prompt %q", cfg.Agent.Primary.Thinking.EnableSystemPrompt)
+	}
+	if cfg.Agent.Primary.Thinking.DisableSystemPrompt != "<|no_think|>" {
+		t.Fatalf("unexpected thinking disable system prompt %q", cfg.Agent.Primary.Thinking.DisableSystemPrompt)
+	}
 }
 
 func TestDecodeProviderThinkingNestedKeysRemainSupported(t *testing.T) {
@@ -166,6 +174,8 @@ default = "disabled"
 parameter_path = "extra_body.enable_thinking"
 enable_suffix = "/think"
 disable_suffix = "/no_think"
+enable_system_prompt = "<|think|>"
+disable_system_prompt = "<|no_think|>"
 
 [security]
 trusted_numbers = ["+1"]
@@ -202,6 +212,12 @@ description = "test"
 	}
 	if cfg.Agent.Primary.Thinking.ParameterPath != "extra_body.enable_thinking" {
 		t.Fatalf("unexpected thinking parameter path %q", cfg.Agent.Primary.Thinking.ParameterPath)
+	}
+	if cfg.Agent.Primary.Thinking.EnableSystemPrompt != "<|think|>" {
+		t.Fatalf("unexpected thinking enable system prompt %q", cfg.Agent.Primary.Thinking.EnableSystemPrompt)
+	}
+	if cfg.Agent.Primary.Thinking.DisableSystemPrompt != "<|no_think|>" {
+		t.Fatalf("unexpected thinking disable system prompt %q", cfg.Agent.Primary.Thinking.DisableSystemPrompt)
 	}
 }
 

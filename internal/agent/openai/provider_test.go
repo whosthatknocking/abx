@@ -134,6 +134,52 @@ func TestChatRequestBodyAppliesThinkingSuffix(t *testing.T) {
 	}
 }
 
+func TestChatRequestBodyAppliesThinkingSystemPrompt(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL: "http://127.0.0.1:1234/v1",
+		Model:   "google/gemma-4-e4b",
+		Thinking: config.ThinkingConfig{
+			EnableSystemPrompt: "<|think|>",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(true)})
+
+	messages, ok := body["messages"].([]map[string]string)
+	if !ok || len(messages) != 2 {
+		t.Fatalf("expected system and user chat messages, got %#v", body["messages"])
+	}
+	if messages[0]["role"] != "system" || messages[0]["content"] != "<|think|>" {
+		t.Fatalf("expected thinking system prompt, got %#v", messages[0])
+	}
+}
+
+func TestChatRequestBodyPrependsThinkingSystemPromptToExistingSystemMessage(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL: "http://127.0.0.1:1234/v1",
+		Model:   "google/gemma-4-e4b",
+		Thinking: config.ThinkingConfig{
+			EnableSystemPrompt: "<|think|>",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{
+		{Role: types.RoleSystem, Text: "Keep replies concise."},
+		{Role: types.RoleUser, Text: "hello"},
+	}, types.AgentOptions{Thinking: boolPtr(true)})
+
+	messages, ok := body["messages"].([]map[string]string)
+	if !ok || len(messages) != 2 {
+		t.Fatalf("expected chat messages, got %#v", body["messages"])
+	}
+	if got := messages[0]["content"]; got != "<|think|>\n\nKeep replies concise." {
+		t.Fatalf("expected thinking prompt to prefix system message, got %q", got)
+	}
+}
+
 func TestNativeLMStudioChatOmitsThinkingParameterPath(t *testing.T) {
 	provider := New(config.ProviderConfig{
 		BaseURL:      "http://127.0.0.1:1234/v1",
@@ -156,6 +202,33 @@ func TestNativeLMStudioChatOmitsThinkingParameterPath(t *testing.T) {
 	input, ok := body["input"].(string)
 	if !ok || !strings.Contains(input, "/nothink") {
 		t.Fatalf("expected /nothink in native LM Studio input, got %#v", body["input"])
+	}
+}
+
+func TestNativeLMStudioChatAppliesThinkingSystemPrompt(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL:      "http://127.0.0.1:1234/v1",
+		Model:        "google/gemma-4-e4b",
+		Integrations: []string{"mcp/playwright"},
+		Thinking: config.ThinkingConfig{
+			EnableSystemPrompt: "<|think|>",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(true)})
+
+	if _, exists := body["extra_body"]; exists {
+		t.Fatalf("expected native LM Studio body to omit extra_body, got %#v", body["extra_body"])
+	}
+	input, ok := body["input"].(string)
+	if !ok {
+		t.Fatalf("expected LM Studio input string, got %#v", body["input"])
+	}
+	if !strings.Contains(input, "System: <|think|>") {
+		t.Fatalf("expected thinking system prompt in native LM Studio input, got %#v", body["input"])
 	}
 }
 

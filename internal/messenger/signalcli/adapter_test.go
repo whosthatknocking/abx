@@ -117,7 +117,7 @@ func TestDecodeEnvelopeFromRPCDirect(t *testing.T) {
 		},
 	})
 
-	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	got, ok := decodeEnvelopeFromRPC("+15550001111", "", payload)
 	if !ok {
 		t.Fatal("expected envelope to decode")
 	}
@@ -154,7 +154,7 @@ func TestDecodeEnvelopeFromRPCGroupMention(t *testing.T) {
 		},
 	})
 
-	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	got, ok := decodeEnvelopeFromRPC("+15550001111", "", payload)
 	if !ok {
 		t.Fatal("expected group envelope to decode")
 	}
@@ -208,7 +208,7 @@ func TestDecodeEnvelopeFromRPCGroupCommandNormalizesMentionPrefix(t *testing.T) 
 				},
 			})
 
-			got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+			got, ok := decodeEnvelopeFromRPC("+15550001111", "", payload)
 			if !ok {
 				t.Fatal("expected group envelope to decode")
 			}
@@ -240,7 +240,7 @@ func TestDecodeEnvelopeFromRPCGroupApprovalNormalizesMentionPrefix(t *testing.T)
 		},
 	})
 
-	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	got, ok := decodeEnvelopeFromRPC("+15550001111", "", payload)
 	if !ok {
 		t.Fatal("expected group envelope to decode")
 	}
@@ -270,7 +270,7 @@ func TestDecodeEnvelopeFromRPCImageOnlyMessage(t *testing.T) {
 		},
 	})
 
-	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	got, ok := decodeEnvelopeFromRPC("+15550001111", "", payload)
 	if !ok {
 		t.Fatal("expected image-only envelope to decode")
 	}
@@ -307,7 +307,7 @@ func TestDecodeEnvelopeFromRPCImageAttachmentStoredPlaintextPath(t *testing.T) {
 		},
 	})
 
-	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	got, ok := decodeEnvelopeFromRPC("+15550001111", "", payload)
 	if !ok {
 		t.Fatal("expected envelope to decode")
 	}
@@ -316,6 +316,41 @@ func TestDecodeEnvelopeFromRPCImageAttachmentStoredPlaintextPath(t *testing.T) {
 	}
 	if got.Attachments[0].FilePath != "/Users/test/.local/share/signal-cli/attachments/example.png" {
 		t.Fatalf("unexpected attachment path %#v", got.Attachments[0])
+	}
+}
+
+func TestDecodeEnvelopeFromRPCImageAttachmentFallsBackToDataDirByID(t *testing.T) {
+	payload := mustRPCMessage(t, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "receive",
+		"params": map[string]any{
+			"envelope": map[string]any{
+				"sourceNumber": "+15551230000",
+				"timestamp":    1710000000000,
+				"dataMessage": map[string]any{
+					"message": "Analyze image.",
+					"attachments": []any{
+						map[string]any{
+							"contentType": "image/png",
+							"id":          "LhhgA0s4etsSHs59fLMh.png",
+							"filename":    "example.png",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	got, ok := decodeEnvelopeFromRPC("+15550001111", "/Users/test/.local/share/signal-cli", payload)
+	if !ok {
+		t.Fatal("expected envelope to decode")
+	}
+	if len(got.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %#v", got.Attachments)
+	}
+	want := "/Users/test/.local/share/signal-cli/attachments/LhhgA0s4etsSHs59fLMh.png"
+	if got.Attachments[0].FilePath != want {
+		t.Fatalf("unexpected fallback attachment path %#v want %q", got.Attachments[0], want)
 	}
 }
 

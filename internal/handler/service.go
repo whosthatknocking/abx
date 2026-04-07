@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -1896,34 +1897,53 @@ func (s *Service) debugVisionLogLine(messages []types.Message) string {
 	}
 	provider := cfg.Agent.Primary
 	usesNativeLMStudio := endpointClass(provider.BaseURL) == "local" && len(provider.Integrations) > 0
-	imageCount := latestRelevantUserImageCount(messages)
-	if imageCount == 0 {
+	attachments := latestRelevantUserImageAttachments(messages)
+	if len(attachments) == 0 {
 		return ""
 	}
+	readableCount := 0
+	pathStates := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
+		path := strings.TrimSpace(attachment.FilePath)
+		if path == "" {
+			pathStates = append(pathStates, "<empty>:missing")
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			pathStates = append(pathStates, path+":unreadable")
+			continue
+		}
+		readableCount++
+		pathStates = append(pathStates, path+":ok")
+	}
 	return fmt.Sprintf(
-		"debug vision request model=%s native_lmstudio=%t outbound_images=%d",
+		"debug vision request model=%s native_lmstudio=%t outbound_images=%d readable_images=%d paths=%q",
 		strings.TrimSpace(provider.Model),
 		usesNativeLMStudio,
-		imageCount,
+		len(attachments),
+		readableCount,
+		strings.Join(pathStates, ","),
 	)
 }
 
-func latestRelevantUserImageCount(messages []types.Message) int {
+func latestRelevantUserImageAttachments(messages []types.Message) []types.Attachment {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != types.RoleUser {
 			continue
 		}
+		out := make([]types.Attachment, 0, len(messages[i].Attachments))
 		count := 0
 		for _, attachment := range messages[i].Attachments {
 			if strings.EqualFold(strings.TrimSpace(attachment.Kind), "image") {
 				count++
+				out = append(out, attachment)
 			}
 		}
 		if count > 0 {
-			return count
+			return out
 		}
 	}
-	return 0
+	return nil
 }
 
 func (s *Service) debugThinkingLogLine(thinkingMode string) string {

@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -135,10 +137,11 @@ func (a *Adapter) runSession(ctx context.Context, handler func(types.IncomingEnv
 			}
 			continue
 		}
-		env, ok := decodeEnvelopeFromRPC(a.cfg.Account, msg)
+		env, ok := decodeEnvelopeFromRPC(a.cfg.Account, a.cfg.DataDir, msg)
 		if !ok {
 			continue
 		}
+		a.logAttachmentDebug(msg, env)
 		handler(env)
 	}
 }
@@ -174,7 +177,7 @@ func (a *Adapter) sendRPC(ctx context.Context, conn net.Conn, reader *bufio.Read
 	return awaitRPCResponse(ctx, conn, reader, id)
 }
 
-func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEnvelope, bool) {
+func decodeEnvelopeFromRPC(account, dataDir string, payload rpcMessage) (types.IncomingEnvelope, bool) {
 	event := payload.Params
 	envelope := childMap(event, "envelope")
 	if len(envelope) == 0 {
@@ -185,7 +188,7 @@ func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEn
 	if messageText == "" {
 		messageText = stringField(envelope, "message")
 	}
-	attachments := imageAttachments(dataMessage)
+	attachments := imageAttachments(dataDir, dataMessage)
 	groupInfo := childMap(dataMessage, "groupInfo")
 	chatType := types.ChatTypeDirect
 	conversationID := "direct:" + stringField(envelope, "sourceNumber")
@@ -214,7 +217,7 @@ func decodeEnvelopeFromRPC(account string, payload rpcMessage) (types.IncomingEn
 	}, true
 }
 
-func imageAttachments(dataMessage map[string]any) []types.Attachment {
+func imageAttachments(dataDir string, dataMessage map[string]any) []types.Attachment {
 	items, ok := dataMessage["attachments"].([]any)
 	if !ok {
 		return nil
@@ -238,6 +241,9 @@ func imageAttachments(dataMessage map[string]any) []types.Attachment {
 			stringField(attachment, "path"),
 		)
 		if filePath == "" {
+			filePath = signalAttachmentPathFallback(dataDir, attachment)
+		}
+		if filePath == "" {
 			continue
 		}
 		out = append(out, types.Attachment{
@@ -258,6 +264,69 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func signalAttachmentPathFallback(dataDir string, attachment map[string]any) string {
+	dataDir = strings.TrimSpace(dataDir)
+	if dataDir == "" {
+		return ""
+	}
+	id := strings.TrimSpace(stringField(attachment, "id"))
+	if id == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "attachments", id)
+}
+
+func (a *Adapter) logAttachmentDebug(payload rpcMessage, env types.IncomingEnvelope) {
+	if a.logger == nil {
+		return
+	}
+	dataMessage := childMap(childMap(payload.Params, "envelope"), "dataMessage")
+	items, _ := dataMessage["attachments"].([]any)
+	if len(items) == 0 && len(env.Attachments) == 0 {
+		return
+	}
+	for i, item := range items {
+		attachment, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		resolved := firstNonEmptyString(
+			stringField(attachment, "storedFilename"),
+			stringField(attachment, "storedPlaintext"),
+			stringField(attachment, "storedPlaintextPath"),
+			stringField(attachment, "storedPlaintextFile"),
+			stringField(attachment, "file"),
+			stringField(attachment, "path"),
+		)
+		a.logger.Printf(
+			"signal-cli attachment debug conversation=%s sender=%s index=%d content_type=%s resolved_path=%q keys=%s",
+			env.ConversationID,
+			env.Sender,
+			i,
+			strings.TrimSpace(stringField(attachment, "contentType")),
+			resolved,
+			strings.Join(sortedMapKeys(attachment), ","),
+		)
+	}
+	if len(env.Attachments) > 0 {
+		a.logger.Printf(
+			"signal-cli attachment debug conversation=%s sender=%s decoded_images=%d",
+			env.ConversationID,
+			env.Sender,
+			len(env.Attachments),
+		)
+	}
+}
+
+func sortedMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func normalizeGroupRoutingText(text string, chatType types.ChatType, mentionedBot bool) string {

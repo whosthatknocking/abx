@@ -1851,16 +1851,62 @@ func (s *Service) debugThinkingLogLine(thinkingMode string) string {
 	if resolvedMode == "" {
 		resolvedMode = "default"
 	}
-	systemPromptConfigured := strings.TrimSpace(provider.Thinking.EnableSystemPrompt) != "" ||
-		strings.TrimSpace(provider.Thinking.DisableSystemPrompt) != ""
-	enableTokenInjected := resolvedMode == "enabled" && strings.TrimSpace(provider.Thinking.EnableSystemPrompt) != ""
+	mechanism := "default"
+	value := ""
+	switch {
+	case strings.TrimSpace(provider.Thinking.ParameterPath) != "":
+		mechanism = "request_field"
+		value = strings.TrimSpace(provider.Thinking.ParameterPath) + "=" + s.debugThinkingRequestValue(provider, resolvedMode)
+	case strings.TrimSpace(provider.Thinking.EnableSystemPrompt) != "" || strings.TrimSpace(provider.Thinking.DisableSystemPrompt) != "":
+		mechanism = "system_prompt"
+		value = s.debugThinkingPromptValue(provider, resolvedMode)
+	case strings.TrimSpace(provider.Thinking.EnableSuffix) != "" || strings.TrimSpace(provider.Thinking.DisableSuffix) != "":
+		mechanism = "suffix"
+		value = s.debugThinkingSuffixValue(provider, resolvedMode)
+	}
 	return fmt.Sprintf(
-		"debug thinking control model=%s mode=%s system_prompt_configured=%t enable_token_injected=%t",
+		"debug thinking control model=%s mode=%s mechanism=%s value=%q",
 		strings.TrimSpace(provider.Model),
 		resolvedMode,
-		systemPromptConfigured,
-		enableTokenInjected,
+		mechanism,
+		value,
 	)
+}
+
+func (s *Service) debugThinkingRequestValue(provider config.ProviderConfig, resolvedMode string) string {
+	if resolvedMode == "enabled" {
+		if value := strings.TrimSpace(provider.Thinking.EnableParameterValue); value != "" {
+			return value
+		}
+		return "true"
+	}
+	if resolvedMode == "disabled" {
+		if value := strings.TrimSpace(provider.Thinking.DisableParameterValue); value != "" {
+			return value
+		}
+		return "false"
+	}
+	return ""
+}
+
+func (s *Service) debugThinkingPromptValue(provider config.ProviderConfig, resolvedMode string) string {
+	if resolvedMode == "enabled" {
+		return strings.TrimSpace(provider.Thinking.EnableSystemPrompt)
+	}
+	if resolvedMode == "disabled" {
+		return strings.TrimSpace(provider.Thinking.DisableSystemPrompt)
+	}
+	return ""
+}
+
+func (s *Service) debugThinkingSuffixValue(provider config.ProviderConfig, resolvedMode string) string {
+	if resolvedMode == "enabled" {
+		return strings.TrimSpace(provider.Thinking.EnableSuffix)
+	}
+	if resolvedMode == "disabled" {
+		return strings.TrimSpace(provider.Thinking.DisableSuffix)
+	}
+	return ""
 }
 
 func normalizedThinkingState(cfg *config.Config) string {

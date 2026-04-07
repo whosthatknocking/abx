@@ -316,6 +316,48 @@ func TestNativeLMStudioChatIncludesLatestUserImages(t *testing.T) {
 	}
 }
 
+func TestNativeLMStudioChatCarriesForwardMostRecentUserImagesForFollowUp(t *testing.T) {
+	dir := t.TempDir()
+	imagePath := dir + "/image.png"
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4e, 0x47}, 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	provider := New(config.ProviderConfig{
+		BaseURL:      "http://127.0.0.1:1234/v1",
+		Model:        "google/gemma-4-e4b",
+		Integrations: []string{"mcp/playwright"},
+	})
+
+	body := provider.chatRequestBody([]types.Message{
+		{
+			Role: types.RoleUser,
+			Text: "see attached",
+			Attachments: []types.Attachment{{
+				Kind:        "image",
+				ContentType: "image/png",
+				FilePath:    imagePath,
+			}},
+		},
+		{
+			Role: types.RoleAssistant,
+			Text: "What should I analyze?",
+		},
+		{
+			Role: types.RoleUser,
+			Text: "Analyze the image.",
+		},
+	}, types.AgentOptions{})
+
+	input, ok := body["input"].([]map[string]any)
+	if !ok || len(input) != 2 {
+		t.Fatalf("expected LM Studio input items, got %#v", body["input"])
+	}
+	if input[1]["type"] != "image" {
+		t.Fatalf("expected carried-forward image input item, got %#v", input[1])
+	}
+}
+
 func TestNativeLMStudioChatAppliesThinkingSystemPrompt(t *testing.T) {
 	provider := New(config.ProviderConfig{
 		BaseURL:      "http://127.0.0.1:1234/v1",

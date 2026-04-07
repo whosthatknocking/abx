@@ -1176,6 +1176,9 @@ func (s *Service) chatWithSessionAgent(ctx context.Context, conversationID strin
 	if line := s.debugThinkingLogLine(thinkingMode); line != "" {
 		s.logger.Printf("%s", line)
 	}
+	if line := s.debugVisionLogLine(messages); line != "" {
+		s.logger.Printf("%s", line)
+	}
 	options := types.AgentOptions{
 		Thinking: thinkingModeOption(thinkingMode),
 	}
@@ -1884,6 +1887,43 @@ func (s *Service) debugInboundAttachmentLogLine(env types.IncomingEnvelope) stri
 		env.Sender,
 		imageCount,
 	)
+}
+
+func (s *Service) debugVisionLogLine(messages []types.Message) string {
+	cfg := s.runtimeConfig()
+	if cfg == nil || !cfg.Debug.Enabled {
+		return ""
+	}
+	provider := cfg.Agent.Primary
+	usesNativeLMStudio := endpointClass(provider.BaseURL) == "local" && len(provider.Integrations) > 0
+	imageCount := latestRelevantUserImageCount(messages)
+	if imageCount == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"debug vision request model=%s native_lmstudio=%t outbound_images=%d",
+		strings.TrimSpace(provider.Model),
+		usesNativeLMStudio,
+		imageCount,
+	)
+}
+
+func latestRelevantUserImageCount(messages []types.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != types.RoleUser {
+			continue
+		}
+		count := 0
+		for _, attachment := range messages[i].Attachments {
+			if strings.EqualFold(strings.TrimSpace(attachment.Kind), "image") {
+				count++
+			}
+		}
+		if count > 0 {
+			return count
+		}
+	}
+	return 0
 }
 
 func (s *Service) debugThinkingLogLine(thinkingMode string) string {

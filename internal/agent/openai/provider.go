@@ -430,19 +430,19 @@ func toLMStudioInput(messages []types.Message) string {
 }
 
 func (p *Provider) toLMStudioInputItems(messages []types.Message) any {
-	lastUserImages := p.lastUserImageAttachments(messages)
+	imageAttachments := p.latestRelevantUserImageAttachments(messages)
 	input := toLMStudioInput(messages)
-	if len(lastUserImages) == 0 {
+	if len(imageAttachments) == 0 {
 		return input
 	}
-	items := make([]map[string]any, 0, 1+len(lastUserImages))
+	items := make([]map[string]any, 0, 1+len(imageAttachments))
 	if strings.TrimSpace(input) != "" {
 		items = append(items, map[string]any{
 			"type":    "message",
 			"content": input,
 		})
 	}
-	for _, attachment := range lastUserImages {
+	for _, attachment := range imageAttachments {
 		dataURL, ok := attachmentDataURL(attachment)
 		if !ok {
 			continue
@@ -458,7 +458,7 @@ func (p *Provider) toLMStudioInputItems(messages []types.Message) any {
 	return items
 }
 
-func (p *Provider) lastUserImageAttachments(messages []types.Message) []types.Attachment {
+func (p *Provider) latestRelevantUserImageAttachments(messages []types.Message) []types.Attachment {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != types.RoleUser {
 			continue
@@ -469,7 +469,9 @@ func (p *Provider) lastUserImageAttachments(messages []types.Message) []types.At
 				out = append(out, attachment)
 			}
 		}
-		return out
+		if len(out) > 0 {
+			return out
+		}
 	}
 	return nil
 }

@@ -108,6 +108,8 @@ provider = "openai"
 model = "qwen/qwen3-8b"
 thinking_default = "enabled"
 thinking_parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
+thinking_enable_parameter_value = "on"
+thinking_disable_parameter_value = "off"
 thinking_enable_suffix = "/think"
 thinking_disable_suffix = "/no_think"
 thinking_enable_system_prompt = "<|think|>"
@@ -149,6 +151,12 @@ description = "test"
 	if cfg.Agent.Primary.Thinking.ParameterPath != "extra_body.chat_template_kwargs.enable_thinking" {
 		t.Fatalf("unexpected thinking parameter path %q", cfg.Agent.Primary.Thinking.ParameterPath)
 	}
+	if cfg.Agent.Primary.Thinking.EnableParameterValue != "on" {
+		t.Fatalf("unexpected thinking enable parameter value %q", cfg.Agent.Primary.Thinking.EnableParameterValue)
+	}
+	if cfg.Agent.Primary.Thinking.DisableParameterValue != "off" {
+		t.Fatalf("unexpected thinking disable parameter value %q", cfg.Agent.Primary.Thinking.DisableParameterValue)
+	}
 	if cfg.Agent.Primary.Thinking.EnableSuffix != "/think" {
 		t.Fatalf("unexpected thinking enable suffix %q", cfg.Agent.Primary.Thinking.EnableSuffix)
 	}
@@ -172,6 +180,8 @@ model = "qwen/qwen3-8b"
 [agent.primary.thinking]
 default = "disabled"
 parameter_path = "extra_body.enable_thinking"
+enable_parameter_value = "on"
+disable_parameter_value = "off"
 enable_suffix = "/think"
 disable_suffix = "/no_think"
 enable_system_prompt = "<|think|>"
@@ -212,6 +222,12 @@ description = "test"
 	}
 	if cfg.Agent.Primary.Thinking.ParameterPath != "extra_body.enable_thinking" {
 		t.Fatalf("unexpected thinking parameter path %q", cfg.Agent.Primary.Thinking.ParameterPath)
+	}
+	if cfg.Agent.Primary.Thinking.EnableParameterValue != "on" {
+		t.Fatalf("unexpected thinking enable parameter value %q", cfg.Agent.Primary.Thinking.EnableParameterValue)
+	}
+	if cfg.Agent.Primary.Thinking.DisableParameterValue != "off" {
+		t.Fatalf("unexpected thinking disable parameter value %q", cfg.Agent.Primary.Thinking.DisableParameterValue)
 	}
 	if cfg.Agent.Primary.Thinking.EnableSystemPrompt != "<|think|>" {
 		t.Fatalf("unexpected thinking enable system prompt %q", cfg.Agent.Primary.Thinking.EnableSystemPrompt)

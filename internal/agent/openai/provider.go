@@ -272,6 +272,7 @@ func (p *Provider) chatRequestBody(messages []types.Message, options types.Agent
 			"integrations": append([]string(nil), p.cfg.Integrations...),
 			"store":        false,
 		}
+		p.applyNativeThinkingRequestBody(body, options)
 		return body
 	}
 	messages = p.applyThinkingSystemMessages(messages, options)
@@ -449,11 +450,22 @@ func (p *Provider) applyThinkingRequestBody(body map[string]any, options types.A
 	if path == "" {
 		return
 	}
-	value, ok := p.thinkingValue(options)
+	value, ok := p.thinkingRequestBodyValue(options)
 	if !ok {
 		return
 	}
 	setNestedValue(body, strings.Split(path, "."), value)
+}
+
+func (p *Provider) applyNativeThinkingRequestBody(body map[string]any, options types.AgentOptions) {
+	if strings.TrimSpace(p.cfg.Thinking.ParameterPath) != "reasoning" {
+		return
+	}
+	value, ok := p.thinkingRequestBodyValue(options)
+	if !ok {
+		return
+	}
+	body["reasoning"] = value
 }
 
 func (p *Provider) thinkingSuffix(options types.AgentOptions) string {
@@ -476,6 +488,21 @@ func (p *Provider) thinkingSystemPrompt(options types.AgentOptions) string {
 		return strings.TrimSpace(p.cfg.Thinking.EnableSystemPrompt)
 	}
 	return strings.TrimSpace(p.cfg.Thinking.DisableSystemPrompt)
+}
+
+func (p *Provider) thinkingRequestBodyValue(options types.AgentOptions) (any, bool) {
+	value, ok := p.thinkingValue(options)
+	if !ok {
+		return nil, false
+	}
+	if value {
+		if configured := strings.TrimSpace(p.cfg.Thinking.EnableParameterValue); configured != "" {
+			return configured, true
+		}
+	} else if configured := strings.TrimSpace(p.cfg.Thinking.DisableParameterValue); configured != "" {
+		return configured, true
+	}
+	return value, true
 }
 
 func (p *Provider) thinkingValue(options types.AgentOptions) (bool, bool) {

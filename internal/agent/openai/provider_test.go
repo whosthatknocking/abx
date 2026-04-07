@@ -111,6 +111,27 @@ func TestChatRequestBodyAppliesThinkingParameterPath(t *testing.T) {
 	}
 }
 
+func TestChatRequestBodyAppliesThinkingParameterPathCustomValues(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL: "http://127.0.0.1:1234/v1",
+		Model:   "google/gemma-4-e4b",
+		Thinking: config.ThinkingConfig{
+			ParameterPath:         "reasoning",
+			EnableParameterValue:  "on",
+			DisableParameterValue: "off",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(false)})
+
+	if value, ok := body["reasoning"].(string); !ok || value != "off" {
+		t.Fatalf("expected reasoning=off, got %#v", body["reasoning"])
+	}
+}
+
 func TestChatRequestBodyAppliesThinkingSuffix(t *testing.T) {
 	provider := New(config.ProviderConfig{
 		BaseURL: "http://127.0.0.1:1234/v1",
@@ -202,6 +223,28 @@ func TestNativeLMStudioChatOmitsThinkingParameterPath(t *testing.T) {
 	input, ok := body["input"].(string)
 	if !ok || !strings.Contains(input, "/nothink") {
 		t.Fatalf("expected /nothink in native LM Studio input, got %#v", body["input"])
+	}
+}
+
+func TestNativeLMStudioChatAppliesReasoningToggle(t *testing.T) {
+	provider := New(config.ProviderConfig{
+		BaseURL:      "http://127.0.0.1:1234/v1",
+		Model:        "google/gemma-4-e4b",
+		Integrations: []string{"mcp/playwright"},
+		Thinking: config.ThinkingConfig{
+			ParameterPath:         "reasoning",
+			EnableParameterValue:  "on",
+			DisableParameterValue: "off",
+		},
+	})
+
+	body := provider.chatRequestBody([]types.Message{{
+		Role: types.RoleUser,
+		Text: "hello",
+	}}, types.AgentOptions{Thinking: boolPtr(false)})
+
+	if value, ok := body["reasoning"].(string); !ok || value != "off" {
+		t.Fatalf("expected native LM Studio reasoning=off, got %#v", body["reasoning"])
 	}
 }
 

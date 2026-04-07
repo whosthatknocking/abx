@@ -21,14 +21,19 @@ request_timeout_seconds = 180
 # Example thinking control for Qwen served through an OpenAI-compatible API.
 # Official Qwen examples show chat_template_kwargs.enable_thinking for the
 # OpenAI-compatible hard switch, and /think or /nothink for the soft switch.
-# If abx is using LM Studio's native /api/v1/chat path for MCP integrations,
-# suffixes can still work for some models, but Gemma 4 expects a system prompt
-# token instead. In that case, leave parameter_path unset and use:
 #thinking_default = "enabled"
 #thinking_parameter_path = "extra_body.chat_template_kwargs.enable_thinking"
 #thinking_enable_suffix = "/think"
 #thinking_disable_suffix = "/no_think"
-#thinking_enable_system_prompt = "<|think|>"
+#
+# Example LM Studio native reasoning control for Gemma 4 with MCP integrations.
+# LM Studio's /api/v1/models can report reasoning allowed_options ["off","on"].
+# In that case, use the native reasoning field rather than suffixes or prompt
+# tokens:
+#thinking_default = "enabled"
+#thinking_parameter_path = "reasoning"
+#thinking_enable_parameter_value = "on"
+#thinking_disable_parameter_value = "off"
 
 [agent.fallback]
 provider = "openai"

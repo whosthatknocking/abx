@@ -705,48 +705,45 @@ func (s *Service) handleControl(ctx context.Context, env types.IncomingEnvelope)
 			}
 			switch normalizeThinkingModeValue(fields[2]) {
 			case "enabled":
-				nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "enabled")
-				if err != nil {
+				if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, "enabled"); err != nil {
 					return err
 				}
 				s.audit(audit.Record{
 					Event:          "control_command",
 					ConversationID: env.ConversationID,
-					SessionID:      nextSessionID,
+					SessionID:      sessionID,
 					Sender:         env.Sender,
 					MessageType:    "control",
 					Decision:       "/agents thinking enable",
 				})
-				return s.sendAssistantTransient(ctx, env.ConversationID, nextSessionID, "Thinking enabled for this session. Started a fresh session to keep the next prompt clean.")
+				return s.sendAssistantTransient(ctx, env.ConversationID, sessionID, "Thinking enabled for this session.")
 			case "disabled":
-				nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "disabled")
-				if err != nil {
+				if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, "disabled"); err != nil {
 					return err
 				}
 				s.audit(audit.Record{
 					Event:          "control_command",
 					ConversationID: env.ConversationID,
-					SessionID:      nextSessionID,
+					SessionID:      sessionID,
 					Sender:         env.Sender,
 					MessageType:    "control",
 					Decision:       "/agents thinking disable",
 				})
-				return s.sendAssistantTransient(ctx, env.ConversationID, nextSessionID, "Thinking disabled for this session. Started a fresh session to keep the next prompt clean.")
+				return s.sendAssistantTransient(ctx, env.ConversationID, sessionID, "Thinking disabled for this session.")
 			default:
 				if strings.EqualFold(fields[2], "reset") || strings.EqualFold(fields[2], "default") {
-					nextSessionID, err := s.rotateSessionForThinkingChange(ctx, env.ConversationID, sessionID, "")
-					if err != nil {
+					if err := s.repo.SaveSessionThinkingMode(ctx, env.ConversationID, sessionID, ""); err != nil {
 						return err
 					}
 					s.audit(audit.Record{
 						Event:          "control_command",
 						ConversationID: env.ConversationID,
-						SessionID:      nextSessionID,
+						SessionID:      sessionID,
 						Sender:         env.Sender,
 						MessageType:    "control",
 						Decision:       "/agents thinking reset",
 					})
-					return s.sendAssistantTransient(ctx, env.ConversationID, nextSessionID, "Thinking mode reset to the agent default for this session. Started a fresh session to keep the next prompt clean.")
+					return s.sendAssistantTransient(ctx, env.ConversationID, sessionID, "Thinking mode reset to the agent default for this session.")
 				}
 				return s.sendAssistant(ctx, env.ConversationID, sessionID, env.ChatType, "Usage: /agents thinking <enable|disable|reset>")
 			}
@@ -1041,41 +1038,6 @@ func (s *Service) sendAssistantDisplay(ctx context.Context, conversationID, sess
 		Output:         displayText,
 	})
 	return s.messenger.Send(ctx, conversationID, displayText)
-}
-
-func (s *Service) rotateSessionForThinkingChange(ctx context.Context, conversationID, sessionID, thinkingMode string) (string, error) {
-	persona, err := s.repo.GetSessionPersona(ctx, conversationID, sessionID)
-	if err != nil {
-		return "", err
-	}
-	format, err := s.repo.GetSessionFormat(ctx, conversationID, sessionID)
-	if err != nil {
-		return "", err
-	}
-	fallbackDisabled, err := s.repo.GetSessionFallbackDisabled(ctx, conversationID, sessionID)
-	if err != nil {
-		return "", err
-	}
-	if _, err := s.repo.RotateConversationSession(ctx, conversationID); err != nil {
-		return "", err
-	}
-	nextSessionID, err := s.repo.GetActiveSessionID(ctx, conversationID)
-	if err != nil {
-		return "", err
-	}
-	if err := s.repo.SaveSessionPersona(ctx, conversationID, nextSessionID, persona); err != nil {
-		return "", err
-	}
-	if err := s.repo.SaveSessionFormat(ctx, conversationID, nextSessionID, format); err != nil {
-		return "", err
-	}
-	if err := s.repo.SaveSessionFallbackDisabled(ctx, conversationID, nextSessionID, fallbackDisabled); err != nil {
-		return "", err
-	}
-	if err := s.repo.SaveSessionThinkingMode(ctx, conversationID, nextSessionID, thinkingMode); err != nil {
-		return "", err
-	}
-	return nextSessionID, nil
 }
 
 func (s *Service) shellRequest(text string) (string, bool) {

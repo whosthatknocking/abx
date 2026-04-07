@@ -75,7 +75,7 @@
 - `/agents reload`: reload agent-related config from disk so updated models and agent settings take effect without restarting the process
 - `/agents persona`: show the current session persona, or set it with `/agents persona <instruction>`, or clear it with `/agents persona reset`
 - `/agents format`: show the current session format, or set it with `/agents format <instruction>`, or clear it with `/agents format reset`
-- `/agents thinking`: show the current session thinking mode, enable it with `/agents thinking enable`, disable it with `/agents thinking disable`, or reset to the agent default with `/agents thinking reset`; changing the mode starts a fresh session and sends a non-persisted confirmation so the control reply does not contaminate the next model prompt while preserving other session settings
+- `/agents thinking`: show the current session thinking mode, enable it with `/agents thinking enable`, disable it with `/agents thinking disable`, or reset to the agent default with `/agents thinking reset`; changing the mode updates the current session and sends a non-persisted confirmation so the control reply does not contaminate the next model prompt
 - `/agents fallback`: show whether fallback is enabled for the current session, disable it with `/agents fallback disable`, or re-enable it with `/agents fallback enable`
 - `/agents switch`: switch the active primary and fallback agent order for the current running process
 - `/reset`: start a fresh active session for the current chat while preserving historical state

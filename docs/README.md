@@ -91,10 +91,11 @@ rpc_port = 7583
 - `agent.primary.model` is required for OpenAI.
 - `agent.primary.request_timeout_seconds` and `agent.fallback.request_timeout_seconds` control how long `abx` waits before treating an agent request as failed and moving to fallback.
 - Agents can optionally declare thinking-control settings directly on each agent block with keys such as `thinking_default`, `thinking_parameter_path`, `thinking_enable_parameter_value`, `thinking_disable_parameter_value`, `thinking_enable_suffix`, `thinking_disable_suffix`, `thinking_enable_system_prompt`, and `thinking_disable_system_prompt`.
-- Changing session thinking mode with `/agents thinking enable|disable|reset` starts a fresh session and sends a non-persisted confirmation so the control reply does not pollute the next prompt; persona, format, and fallback settings are carried forward.
+- Changing session thinking mode with `/agents thinking enable|disable|reset` updates the current session and sends a non-persisted confirmation so the control reply does not pollute the next prompt.
 - `[[mcp.servers]]` controls which MCP server names are enabled for local LM Studio-style integrations.
 - For local endpoints with enabled MCP servers, `abx` uses LM Studio's native `/api/v1/chat` route instead of OpenAI-compatible `/v1/chat/completions`.
 - For LM Studio native `/api/v1/chat`, prefer the model's native reasoning request field when `/api/v1/models` reports `capabilities.reasoning.allowed_options`; for Gemma 4 this can be `thinking_parameter_path = "reasoning"` with values `on` and `off`.
+- When LM Studio honors native reasoning controls, responses may still omit a separate `reasoning` output section; validate behavior using the model metadata plus response stats such as `reasoning_output_tokens`.
 - In LM Studio, using servers from `mcp.json` through the API requires the `Allow calling servers from mcp.json` setting to be enabled, and LM Studio requires authentication to be enabled before that setting can be turned on.
 - `[debug].enabled = true` appends agent identity details to normal chat responses for troubleshooting.
 - Shell commands are blocked unless they match an enabled allow rule.

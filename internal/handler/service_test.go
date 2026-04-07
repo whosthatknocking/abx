@@ -1833,7 +1833,7 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handle /agents thinking disable: %v", err)
 	}
-	if !strings.Contains(msgs.sent[1], "Thinking disabled for this session. Started a fresh session to keep the next prompt clean.") {
+	if !strings.Contains(msgs.sent[1], "Thinking disabled for this session.") {
 		t.Fatalf("unexpected disable response: %q", msgs.sent[1])
 	}
 	mode, err := repo.GetActiveSessionThinkingMode(ctx, conversationID)
@@ -1847,15 +1847,17 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session id after disable: %v", err)
 	}
-	if afterDisableSessionID == initialSessionID {
-		t.Fatalf("expected thinking disable to rotate the session")
+	if afterDisableSessionID != initialSessionID {
+		t.Fatalf("expected thinking disable to keep the same session")
 	}
 	history, err := repo.GetHistory(ctx, conversationID, afterDisableSessionID, 10)
 	if err != nil {
 		t.Fatalf("get history after disable: %v", err)
 	}
-	if len(history) != 0 {
-		t.Fatalf("expected thinking disable confirmation to stay out of stored history, got %#v", history)
+	for _, msg := range history {
+		if msg.Role == types.RoleAssistant && strings.Contains(msg.Text, "Thinking disabled for this session.") {
+			t.Fatalf("expected thinking disable confirmation to stay out of stored history, got %#v", history)
+		}
 	}
 
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
@@ -1866,15 +1868,15 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handle /agents thinking enable: %v", err)
 	}
-	if !strings.Contains(msgs.sent[2], "Thinking enabled for this session. Started a fresh session to keep the next prompt clean.") {
+	if !strings.Contains(msgs.sent[2], "Thinking enabled for this session.") {
 		t.Fatalf("unexpected enable response: %q", msgs.sent[2])
 	}
 	afterEnableSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
 	if err != nil {
 		t.Fatalf("get session id after enable: %v", err)
 	}
-	if afterEnableSessionID == afterDisableSessionID {
-		t.Fatalf("expected thinking enable to rotate the session")
+	if afterEnableSessionID != afterDisableSessionID {
+		t.Fatalf("expected thinking enable to keep the same session")
 	}
 
 	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
@@ -1885,7 +1887,7 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("handle /agents thinking reset: %v", err)
 	}
-	if !strings.Contains(msgs.sent[3], "Thinking mode reset to the agent default for this session. Started a fresh session to keep the next prompt clean.") {
+	if !strings.Contains(msgs.sent[3], "Thinking mode reset to the agent default for this session.") {
 		t.Fatalf("unexpected reset response: %q", msgs.sent[3])
 	}
 	mode, err = repo.GetActiveSessionThinkingMode(ctx, conversationID)
@@ -1899,93 +1901,8 @@ func TestThinkingModeShowDisableEnableAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session id after reset: %v", err)
 	}
-	if afterResetSessionID == afterEnableSessionID {
-		t.Fatalf("expected thinking reset to rotate the session")
-	}
-}
-
-func TestThinkingModeRotationPreservesOtherSessionSettings(t *testing.T) {
-	repo := inmemory.New()
-	msgs := &fakeMessenger{}
-	svc := NewService(Options{
-		Version: "test",
-		Config: &config.Config{
-			Agent: config.AgentConfig{
-				Primary: config.ProviderConfig{
-					Provider: "openai",
-					Model:    "qwen/qwen3-8b",
-					Thinking: config.ThinkingConfig{
-						ParameterPath: "extra_body.chat_template_kwargs.enable_thinking",
-					},
-				},
-			},
-			Security: config.SecurityConfig{TrustedNumbers: []string{"+1555"}},
-		},
-		Repo:      repo,
-		Messenger: msgs,
-		Agent:     &fakeAgent{response: "ok"},
-		Executor:  &fakeExecutor{},
-	})
-
-	ctx := context.Background()
-	conversationID := "direct:+1555"
-	sessionID, err := repo.GetActiveSessionID(ctx, conversationID)
-	if err != nil {
-		t.Fatalf("get initial session id: %v", err)
-	}
-	if err := repo.SaveSessionPersona(ctx, conversationID, sessionID, "witty comedian"); err != nil {
-		t.Fatalf("save persona: %v", err)
-	}
-	if err := repo.SaveSessionFormat(ctx, conversationID, sessionID, "markdown"); err != nil {
-		t.Fatalf("save format: %v", err)
-	}
-	if err := repo.SaveSessionFallbackDisabled(ctx, conversationID, sessionID, true); err != nil {
-		t.Fatalf("save fallback disabled: %v", err)
-	}
-
-	if err := svc.HandleMessage(ctx, types.IncomingEnvelope{
-		ConversationID: conversationID,
-		Sender:         "+1555",
-		ChatType:       types.ChatTypeDirect,
-		Text:           "/agents thinking disable",
-	}); err != nil {
-		t.Fatalf("handle /agents thinking disable: %v", err)
-	}
-
-	nextSessionID, err := repo.GetActiveSessionID(ctx, conversationID)
-	if err != nil {
-		t.Fatalf("get next session id: %v", err)
-	}
-	if nextSessionID == sessionID {
-		t.Fatalf("expected session rotation after thinking change")
-	}
-	persona, err := repo.GetSessionPersona(ctx, conversationID, nextSessionID)
-	if err != nil {
-		t.Fatalf("get persona: %v", err)
-	}
-	if persona != "witty comedian" {
-		t.Fatalf("expected persona to be preserved, got %q", persona)
-	}
-	format, err := repo.GetSessionFormat(ctx, conversationID, nextSessionID)
-	if err != nil {
-		t.Fatalf("get format: %v", err)
-	}
-	if format != "markdown" {
-		t.Fatalf("expected format to be preserved, got %q", format)
-	}
-	fallbackDisabled, err := repo.GetSessionFallbackDisabled(ctx, conversationID, nextSessionID)
-	if err != nil {
-		t.Fatalf("get fallback disabled: %v", err)
-	}
-	if !fallbackDisabled {
-		t.Fatalf("expected fallback setting to be preserved")
-	}
-	history, err := repo.GetHistory(ctx, conversationID, nextSessionID, 10)
-	if err != nil {
-		t.Fatalf("get history for rotated session: %v", err)
-	}
-	if len(history) != 0 {
-		t.Fatalf("expected no stored confirmation in rotated session history, got %#v", history)
+	if afterResetSessionID != afterEnableSessionID {
+		t.Fatalf("expected thinking reset to keep the same session")
 	}
 }
 

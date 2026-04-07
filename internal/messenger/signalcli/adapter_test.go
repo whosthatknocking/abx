@@ -285,6 +285,40 @@ func TestDecodeEnvelopeFromRPCImageOnlyMessage(t *testing.T) {
 	}
 }
 
+func TestDecodeEnvelopeFromRPCImageAttachmentStoredPlaintextPath(t *testing.T) {
+	payload := mustRPCMessage(t, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "receive",
+		"params": map[string]any{
+			"envelope": map[string]any{
+				"sourceNumber": "+15551230000",
+				"timestamp":    1710000000000,
+				"dataMessage": map[string]any{
+					"message": "Analyze image.",
+					"attachments": []any{
+						map[string]any{
+							"contentType":     "image/png",
+							"storedPlaintext": "/Users/test/.local/share/signal-cli/attachments/example.png",
+							"filename":        "example.png",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	got, ok := decodeEnvelopeFromRPC("+15550001111", payload)
+	if !ok {
+		t.Fatal("expected envelope to decode")
+	}
+	if len(got.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %#v", got.Attachments)
+	}
+	if got.Attachments[0].FilePath != "/Users/test/.local/share/signal-cli/attachments/example.png" {
+		t.Fatalf("unexpected attachment path %#v", got.Attachments[0])
+	}
+}
+
 func TestSplitOutgoingMessageLeavesShortMessageUntouched(t *testing.T) {
 	got := splitOutgoingMessage("hello", 10)
 	if len(got) != 1 || got[0] != "hello" {

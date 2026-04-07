@@ -231,6 +231,9 @@ func imageAttachments(dataMessage map[string]any) []types.Attachment {
 		}
 		filePath := firstNonEmptyString(
 			stringField(attachment, "storedFilename"),
+			stringField(attachment, "storedPlaintext"),
+			stringField(attachment, "storedPlaintextPath"),
+			stringField(attachment, "storedPlaintextFile"),
 			stringField(attachment, "file"),
 			stringField(attachment, "path"),
 		)

@@ -74,7 +74,11 @@ type ThinkingConfig struct {
 }
 
 type SecurityConfig struct {
-	TrustedNumbers []string
+	TrustedNumbers                   []string
+	NotifyOnUntrustedMessage         bool
+	UntrustedMessageNotifyNumbers    []string
+	UntrustedMessageIncludePreview   bool
+	UntrustedMessageRateLimitSeconds int
 }
 
 type AuditConfig struct {
@@ -190,6 +194,19 @@ func (c *Config) normalize() error {
 	if len(c.Security.TrustedNumbers) == 0 {
 		return errors.New("security.trusted_numbers must not be empty")
 	}
+	if c.Security.UntrustedMessageRateLimitSeconds <= 0 {
+		c.Security.UntrustedMessageRateLimitSeconds = 900
+	}
+	if c.Security.NotifyOnUntrustedMessage {
+		if len(c.Security.UntrustedMessageNotifyNumbers) == 0 {
+			return errors.New("security.untrusted_message_notify_numbers must not be empty when security.notify_on_untrusted_message is enabled")
+		}
+		for _, notify := range c.Security.UntrustedMessageNotifyNumbers {
+			if !isTrusted(notify, c.Security.TrustedNumbers) {
+				return fmt.Errorf("security.untrusted_message_notify_numbers entry %q must also appear in security.trusted_numbers", notify)
+			}
+		}
+	}
 	return nil
 }
 
@@ -241,4 +258,13 @@ func normalizeThinkingMode(value string) string {
 	default:
 		return ""
 	}
+}
+
+func isTrusted(sender string, trusted []string) bool {
+	for _, value := range trusted {
+		if strings.TrimSpace(value) == strings.TrimSpace(sender) {
+			return true
+		}
+	}
+	return false
 }

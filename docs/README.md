@@ -21,6 +21,7 @@
 
 - Messaging-to-agent bridge architecture with Signal as the first transport
 - Trusted-sender-only messaging interaction in v1
+- Optional alerts to trusted recipients when an untrusted number messages the bot
 - Group-chat activation via transport metadata in v1 (`signal-cli` Signal mention metadata)
 - Built-in slash commands and `/run` behave the same in direct and group chat once the bot is explicitly mentioned in the group
 - Conversational agent responses from local context only
@@ -92,6 +93,10 @@ rpc_port = 7583
 - Configuration is file-based only in v1.
 - The checked-in `VERSION` file is the source of truth for release versioning.
 - `agent.primary.model` is required for OpenAI.
+- `security.notify_on_untrusted_message` can send a notification to selected trusted numbers when an untrusted sender contacts the bot.
+- `security.untrusted_message_notify_numbers` must be a subset of `security.trusted_numbers`.
+- `security.untrusted_message_include_preview` defaults to `false` so unknown message content is not forwarded unless you explicitly opt in.
+- `security.untrusted_message_rate_limit_seconds` controls how often repeated alerts from the same unknown sender can be forwarded; the default is 900 seconds.
 - `agent.primary.request_timeout_seconds` and `agent.fallback.request_timeout_seconds` control how long `abx` waits before treating an agent request as failed and moving to fallback.
 - Agents can optionally declare thinking-control settings directly on each agent block with keys such as `thinking_default`, `thinking_parameter_path`, `thinking_enable_parameter_value`, `thinking_disable_parameter_value`, `thinking_enable_suffix`, `thinking_disable_suffix`, `thinking_enable_system_prompt`, and `thinking_disable_system_prompt`.
 - Changing session thinking mode with `/agents thinking enable|disable|reset` updates the current session and sends a non-persisted confirmation so the control reply does not pollute the next prompt.
@@ -105,7 +110,7 @@ rpc_port = 7583
 - Shell commands are blocked unless they match an enabled allow rule.
 - `signal-cli` is expected to run locally in JSON-RPC mode over a UNIX socket by default.
 - `/version` includes build metadata when it is available in the binary.
-- `/config` reports normalized, non-secret runtime settings including messaging mode, agent contract/model, MCP visibility, storage, command policy, thinking-control state, debug state, and version.
+- `/config` reports normalized, non-secret runtime settings including messaging mode, agent contract/model, MCP visibility, storage, command policy, untrusted-message alert state, thinking-control state, debug state, and version.
 - Pushing a Git tag in the form `vX.Y.Z` that matches `VERSION` triggers the GitHub release workflow and uploads release artifacts.
 
 ## Notes

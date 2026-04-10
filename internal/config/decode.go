@@ -39,6 +39,10 @@ func decodeConfig(tree map[string]any) (*Config, error) {
 
 	security := childMap(tree, "security")
 	cfg.Security.TrustedNumbers = stringSliceValue(security, "trusted_numbers")
+	cfg.Security.NotifyOnUntrustedMessage = boolValueDefault(security, "notify_on_untrusted_message", false)
+	cfg.Security.UntrustedMessageNotifyNumbers = stringSliceValue(security, "untrusted_message_notify_numbers")
+	cfg.Security.UntrustedMessageIncludePreview = boolValueDefault(security, "untrusted_message_include_preview", false)
+	cfg.Security.UntrustedMessageRateLimitSeconds = intValue(security, "untrusted_message_rate_limit_seconds")
 
 	audit := childMap(tree, "audit")
 	cfg.Audit = AuditConfig{

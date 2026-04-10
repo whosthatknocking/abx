@@ -18,8 +18,9 @@ import (
 )
 
 type fakeMessenger struct {
-	mu   sync.Mutex
-	sent []string
+	mu             sync.Mutex
+	sent           []string
+	sentRecipients []string
 }
 
 func (m *fakeMessenger) Start(ctx context.Context, handler func(types.IncomingEnvelope)) error {
@@ -27,9 +28,10 @@ func (m *fakeMessenger) Start(ctx context.Context, handler func(types.IncomingEn
 	return ctx.Err()
 }
 
-func (m *fakeMessenger) Send(_ context.Context, _ string, text string) error {
+func (m *fakeMessenger) Send(_ context.Context, recipient string, text string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.sentRecipients = append(m.sentRecipients, recipient)
 	m.sent = append(m.sent, text)
 	return nil
 }
@@ -782,8 +784,198 @@ func TestConfigCommandOmitsFallbackAndUsesNormalizedDefaults(t *testing.T) {
 	if !strings.Contains(msgs.sent[0], "Command timeout: 60s") {
 		t.Fatalf("expected normalized command timeout, got %q", msgs.sent[0])
 	}
+	if !strings.Contains(msgs.sent[0], "Untrusted message alerts: disabled") {
+		t.Fatalf("expected normalized untrusted alert state, got %q", msgs.sent[0])
+	}
 	if !strings.Contains(msgs.sent[0], "Debug: disabled") {
 		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+}
+
+func TestConfigCommandShowsUntrustedMessageAlertState(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Agent: config.AgentConfig{
+				Primary: config.ProviderConfig{Model: "gpt-4o-mini"},
+			},
+			Security: config.SecurityConfig{
+				TrustedNumbers:                   []string{"+1555", "+1666"},
+				NotifyOnUntrustedMessage:         true,
+				UntrustedMessageNotifyNumbers:    []string{"+1666"},
+				UntrustedMessageIncludePreview:   false,
+				UntrustedMessageRateLimitSeconds: 900,
+			},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1555",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "/config",
+	}); err != nil {
+		t.Fatalf("handle /config: %v", err)
+	}
+
+	if !strings.Contains(msgs.sent[0], "Untrusted message alerts: enabled (1 recipient, preview disabled, rate limit 900s)") {
+		t.Fatalf("unexpected /config response: %q", msgs.sent[0])
+	}
+}
+
+func TestHandleMessageNotifiesTrustedRecipientForUntrustedSender(t *testing.T) {
+	repo := inmemory.New()
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{
+				TrustedNumbers:                   []string{"+1555", "+1666"},
+				NotifyOnUntrustedMessage:         true,
+				UntrustedMessageNotifyNumbers:    []string{"+1666"},
+				UntrustedMessageIncludePreview:   false,
+				UntrustedMessageRateLimitSeconds: 900,
+			},
+		},
+		Repo:      repo,
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "direct:+1999",
+		Sender:         "+1999",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "hello there",
+		CreatedAt:      time.Date(2026, 4, 10, 15, 4, 5, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("handle untrusted message: %v", err)
+	}
+
+	if len(msgs.sent) != 1 {
+		t.Fatalf("expected one notification, got %d", len(msgs.sent))
+	}
+	if got := msgs.sentRecipients[0]; got != "+1666" {
+		t.Fatalf("unexpected notification recipient %q", got)
+	}
+	if !strings.Contains(msgs.sent[0], "Untrusted message attempt.") {
+		t.Fatalf("unexpected notification text: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "From: +1999") {
+		t.Fatalf("unexpected notification text: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[0], "Preview: disabled") {
+		t.Fatalf("unexpected notification text: %q", msgs.sent[0])
+	}
+	history, err := repo.GetActiveHistory(context.Background(), "direct:+1999", 10)
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("expected no stored conversation history for untrusted sender, got %d messages", len(history))
+	}
+}
+
+func TestHandleMessageUntrustedNotificationRateLimit(t *testing.T) {
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{
+				TrustedNumbers:                   []string{"+1555", "+1666"},
+				NotifyOnUntrustedMessage:         true,
+				UntrustedMessageNotifyNumbers:    []string{"+1666"},
+				UntrustedMessageIncludePreview:   true,
+				UntrustedMessageRateLimitSeconds: 900,
+			},
+		},
+		Repo:      inmemory.New(),
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	first := types.IncomingEnvelope{
+		ConversationID: "direct:+1999",
+		Sender:         "+1999",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "first probe",
+		CreatedAt:      time.Date(2026, 4, 10, 15, 0, 0, 0, time.UTC),
+	}
+	second := types.IncomingEnvelope{
+		ConversationID: "direct:+1999",
+		Sender:         "+1999",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "second probe",
+		CreatedAt:      time.Date(2026, 4, 10, 15, 10, 0, 0, time.UTC),
+	}
+	third := types.IncomingEnvelope{
+		ConversationID: "direct:+1999",
+		Sender:         "+1999",
+		ChatType:       types.ChatTypeDirect,
+		Text:           "third probe",
+		CreatedAt:      time.Date(2026, 4, 10, 15, 16, 0, 0, time.UTC),
+	}
+
+	if err := svc.HandleMessage(context.Background(), first); err != nil {
+		t.Fatalf("handle first untrusted message: %v", err)
+	}
+	if err := svc.HandleMessage(context.Background(), second); err != nil {
+		t.Fatalf("handle second untrusted message: %v", err)
+	}
+	if err := svc.HandleMessage(context.Background(), third); err != nil {
+		t.Fatalf("handle third untrusted message: %v", err)
+	}
+
+	if len(msgs.sent) != 2 {
+		t.Fatalf("expected 2 notifications after rate limiting, got %d", len(msgs.sent))
+	}
+	if !strings.Contains(msgs.sent[0], "Preview: first probe") {
+		t.Fatalf("unexpected first notification text: %q", msgs.sent[0])
+	}
+	if !strings.Contains(msgs.sent[1], "Preview: third probe") {
+		t.Fatalf("unexpected third notification text: %q", msgs.sent[1])
+	}
+}
+
+func TestHandleMessageTrustedGroupWithoutMentionDoesNotNotify(t *testing.T) {
+	msgs := &fakeMessenger{}
+	svc := NewService(Options{
+		Version: "test",
+		Config: &config.Config{
+			Security: config.SecurityConfig{
+				TrustedNumbers:                   []string{"+1555", "+1666"},
+				NotifyOnUntrustedMessage:         true,
+				UntrustedMessageNotifyNumbers:    []string{"+1666"},
+				UntrustedMessageIncludePreview:   true,
+				UntrustedMessageRateLimitSeconds: 900,
+			},
+		},
+		Repo:      inmemory.New(),
+		Messenger: msgs,
+		Agent:     &fakeAgent{response: "ignored"},
+		Executor:  &fakeExecutor{},
+	})
+
+	if err := svc.HandleMessage(context.Background(), types.IncomingEnvelope{
+		ConversationID: "group:abc",
+		Sender:         "+1555",
+		ChatType:       types.ChatTypeGroup,
+		Text:           "hello group",
+		MentionedBot:   false,
+	}); err != nil {
+		t.Fatalf("handle trusted group without mention: %v", err)
+	}
+
+	if len(msgs.sent) != 0 {
+		t.Fatalf("expected no notification, got %d messages", len(msgs.sent))
 	}
 }
 

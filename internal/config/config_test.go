@@ -322,3 +322,56 @@ func TestNormalizeRejectsUnsupportedPolicyMode(t *testing.T) {
 		t.Fatalf("unexpected error: %q", got)
 	}
 }
+
+func TestNormalizeUntrustedMessageNotifications(t *testing.T) {
+	cfg := &Config{
+		Agent: AgentConfig{
+			Primary: ProviderConfig{
+				Provider: "openai",
+				Model:    "gpt-4o-mini",
+			},
+		},
+		Security: SecurityConfig{
+			TrustedNumbers:                []string{"+1", "+2"},
+			NotifyOnUntrustedMessage:      true,
+			UntrustedMessageNotifyNumbers: []string{"+1"},
+		},
+		Command: CommandConfig{
+			WorkDir: "~/abx/workspace",
+		},
+	}
+
+	if err := cfg.normalize(); err != nil {
+		t.Fatalf("normalize config: %v", err)
+	}
+	if cfg.Security.UntrustedMessageRateLimitSeconds != 900 {
+		t.Fatalf("expected default rate limit, got %d", cfg.Security.UntrustedMessageRateLimitSeconds)
+	}
+}
+
+func TestNormalizeRejectsUntrustedMessageNotificationRecipientsOutsideTrustedList(t *testing.T) {
+	cfg := &Config{
+		Agent: AgentConfig{
+			Primary: ProviderConfig{
+				Provider: "openai",
+				Model:    "gpt-4o-mini",
+			},
+		},
+		Security: SecurityConfig{
+			TrustedNumbers:                []string{"+1"},
+			NotifyOnUntrustedMessage:      true,
+			UntrustedMessageNotifyNumbers: []string{"+2"},
+		},
+		Command: CommandConfig{
+			WorkDir: "~/abx/workspace",
+		},
+	}
+
+	err := cfg.normalize()
+	if err == nil {
+		t.Fatal("expected notification recipient validation error")
+	}
+	if got := err.Error(); got != `security.untrusted_message_notify_numbers entry "+2" must also appear in security.trusted_numbers` {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}

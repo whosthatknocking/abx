@@ -13,6 +13,7 @@
 - In direct chats, only trusted numbers may interact with `abx`.
 - In group chats, only trusted numbers may interact and the bot must be explicitly mentioned by Signal mention metadata.
 - In group chats, built-in slash commands such as `/help`, `/version`, `/config`, `/agents ...`, `/run ...`, and `/reset` work the same way as in direct chat once the bot is explicitly mentioned.
+- Optionally, `abx` can notify selected trusted numbers when an untrusted number messages the bot. The untrusted sender still receives no response.
 
 ## Before Using `abx`
 
@@ -70,6 +71,15 @@
 - `/help`: show a quick summary of supported message types and commands
 - `/version`: show the running application version and build metadata when available
 - `/config`: show a safe normalized runtime summary of messaging mode, agent contract/model, per-agent request timeouts, optional fallback, thinking-control state, MCP visibility, storage, command policy, debug state, and version
+- `/config` also reports whether untrusted-message alerts are enabled, whether previews are forwarded, and the configured rate-limit window without exposing phone numbers
+
+## Untrusted Message Alerts
+
+- If `security.notify_on_untrusted_message = true`, `abx` can forward a short alert to the configured `security.untrusted_message_notify_numbers` when an unknown sender contacts the bot.
+- Alert recipients must already be listed in `security.trusted_numbers`.
+- The unknown sender is still ignored. The alert does not create a normal conversation session or grant access.
+- By default, alerts do not include the unknown sender's message body. Enable `security.untrusted_message_include_preview = true` only if you want a short preview forwarded.
+- Repeated messages from the same unknown sender are rate-limited by `security.untrusted_message_rate_limit_seconds`.
 - `/agents list`: show the configured primary and optional fallback agents
 - `/agents status`: check whether the configured agents are reachable, and show the current session fallback and thinking status when configured
 - `/agents reload`: reload agent-related config from disk so updated models and agent settings take effect without restarting the process

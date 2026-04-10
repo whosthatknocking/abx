@@ -62,6 +62,11 @@ trusted_numbers = [
   "+15551234567",
   "+15557654321"
 ]
+# Optional: notify trusted recipients when an untrusted number messages the bot.
+notify_on_untrusted_message = false
+untrusted_message_notify_numbers = ["+15551234567"]
+untrusted_message_include_preview = false
+untrusted_message_rate_limit_seconds = 900
 
 # Audit Logging
 [audit]

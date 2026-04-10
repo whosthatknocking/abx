@@ -108,6 +108,10 @@ trusted_numbers = [
   "+15551234567",
   "+15557654321"
 ]
+notify_on_untrusted_message = false
+untrusted_message_notify_numbers = ["+15551234567"]
+untrusted_message_include_preview = false
+untrusted_message_rate_limit_seconds = 900
 
 # Audit Logging
 [audit]
@@ -262,6 +266,7 @@ All project documentation must live under the `docs/` directory. The repository 
   - In a group conversation, built-in slash commands and `/run` must remain available under the same semantics as direct chat once that explicit mention gate is satisfied.
   - Transport-specific mention prefixes or placeholders may be normalized before command routing, but the explicit mention requirement must still be enforced from transport metadata rather than plain text alone.
   - Messages from untrusted numbers must never trigger command proposals, approvals, or normal conversational responses in any chat context.
+  - When explicitly enabled in config, a message from an untrusted number may trigger a separate notification to configured trusted recipients, but that alert must not create a conversation session for the untrusted sender or send any reply back to that sender.
 
 - **Message Classification**:
   - Not all inbound messages are shell-command requests.
@@ -361,8 +366,9 @@ All project documentation must live under the `docs/` directory. The repository 
     11. Storage backend name
     12. Command policy mode
     13. Command timeout
-    14. Debug enabled/disabled state
-    15. Application version
+    14. Untrusted-message alert enabled/disabled state plus safe summary metadata such as recipient count, preview enabled/disabled state, and rate-limit window
+    15. Debug enabled/disabled state
+    16. Application version
   - `/config` values should be normalized to their effective runtime values where defaults apply.
   - The fallback section is optional and should be omitted entirely when no fallback agent is configured.
   - In v1, the primary and fallback contract names should describe the agent API contract in use, such as `openai-compatible`, rather than exposing internal locality labels.

@@ -55,18 +55,20 @@ type ReloadAgents struct {
 type ReloadAgentsFunc func(ctx context.Context) (*ReloadAgents, error)
 
 type Service struct {
-	version   string
-	buildInfo string
-	runtimeMu sync.RWMutex
-	config    *config.Config
-	logger    *log.Logger
-	repo      repository.Repository
-	auditor   *audit.Logger
-	messenger messenger
-	agent     agent.Provider
-	executor  commandExecutor
-	reload    ReloadAgentsFunc
-	locks     sync.Map
+	version                  string
+	buildInfo                string
+	runtimeMu                sync.RWMutex
+	config                   *config.Config
+	logger                   *log.Logger
+	repo                     repository.Repository
+	auditor                  *audit.Logger
+	messenger                messenger
+	agent                    agent.Provider
+	executor                 commandExecutor
+	reload                   ReloadAgentsFunc
+	locks                    sync.Map
+	untrustedNotifyMu        sync.Mutex
+	lastUntrustedNotifyByKey map[string]time.Time
 }
 
 const (
@@ -87,16 +89,17 @@ func NewService(opts Options) *Service {
 		logger = log.New(io.Discard, "", 0)
 	}
 	return &Service{
-		version:   opts.Version,
-		buildInfo: strings.TrimSpace(opts.BuildInfo),
-		config:    opts.Config,
-		logger:    logger,
-		repo:      opts.Repo,
-		auditor:   opts.Auditor,
-		messenger: opts.Messenger,
-		agent:     opts.Agent,
-		executor:  opts.Executor,
-		reload:    opts.Reload,
+		version:                  opts.Version,
+		buildInfo:                strings.TrimSpace(opts.BuildInfo),
+		config:                   opts.Config,
+		logger:                   logger,
+		repo:                     opts.Repo,
+		auditor:                  opts.Auditor,
+		messenger:                opts.Messenger,
+		agent:                    opts.Agent,
+		executor:                 opts.Executor,
+		reload:                   opts.Reload,
+		lastUntrustedNotifyByKey: make(map[string]time.Time),
 	}
 }
 
@@ -126,14 +129,29 @@ func (s *Service) HandleMessage(ctx context.Context, env types.IncomingEnvelope)
 }
 
 func (s *Service) handleMessage(ctx context.Context, env types.IncomingEnvelope) error {
-	if !s.allowed(env) {
+	cfg := s.runtimeConfig()
+	if !isTrusted(env.Sender, cfg.Security.TrustedNumbers) {
 		s.logger.Printf("untrusted interaction rejected conversation=%s sender=%s chat_type=%s mentioned=%t", env.ConversationID, env.Sender, env.ChatType, env.MentionedBot)
 		s.audit(audit.Record{
 			Event:          "message_rejected",
 			ConversationID: env.ConversationID,
 			Sender:         env.Sender,
 			MessageType:    "inbound",
-			Decision:       "untrusted_or_not_mentioned",
+			Decision:       "untrusted_sender",
+		})
+		if err := s.notifyOnUntrustedMessage(ctx, env, cfg); err != nil {
+			s.logger.Printf("untrusted notification failed conversation=%s sender=%s err=%v", env.ConversationID, env.Sender, err)
+		}
+		return nil
+	}
+	if env.ChatType == types.ChatTypeGroup && !env.MentionedBot {
+		s.logger.Printf("trusted group interaction rejected without mention conversation=%s sender=%s", env.ConversationID, env.Sender)
+		s.audit(audit.Record{
+			Event:          "message_rejected",
+			ConversationID: env.ConversationID,
+			Sender:         env.Sender,
+			MessageType:    "inbound",
+			Decision:       "trusted_sender_not_mentioned",
 		})
 		return nil
 	}
@@ -1261,11 +1279,104 @@ func (s *Service) configText() string {
 		fmt.Sprintf("Storage: %s", normalizedDatabaseType(cfg)),
 		fmt.Sprintf("Command policy: %s", normalizedPolicyMode(cfg)),
 		fmt.Sprintf("Command timeout: %ds", normalizedCommandTimeout(cfg)),
+		fmt.Sprintf("Untrusted message alerts: %s", normalizedUntrustedMessageAlertState(cfg)),
 		fmt.Sprintf("Thinking control: %s", normalizedThinkingState(cfg)),
 		fmt.Sprintf("Debug: %s", normalizedDebugState(cfg)),
 		fmt.Sprintf("Version: %s", strings.TrimSpace(s.version)),
 	)
 	return strings.Join(lines, "\n")
+}
+
+func (s *Service) notifyOnUntrustedMessage(ctx context.Context, env types.IncomingEnvelope, cfg *config.Config) error {
+	if cfg == nil || !cfg.Security.NotifyOnUntrustedMessage {
+		return nil
+	}
+	if !s.shouldSendUntrustedMessageNotification(env, cfg) {
+		return nil
+	}
+	text := formatUntrustedMessageNotification(env, cfg.Security.UntrustedMessageIncludePreview)
+	for _, recipient := range cfg.Security.UntrustedMessageNotifyNumbers {
+		recipient = strings.TrimSpace(recipient)
+		if recipient == "" {
+			continue
+		}
+		if err := s.messenger.Send(ctx, recipient, text); err != nil {
+			return err
+		}
+		s.audit(audit.Record{
+			Event:          "untrusted_message_notification_sent",
+			ConversationID: env.ConversationID,
+			Sender:         env.Sender,
+			Recipient:      recipient,
+			MessageType:    "outbound",
+			Output:         text,
+		})
+	}
+	return nil
+}
+
+func (s *Service) shouldSendUntrustedMessageNotification(env types.IncomingEnvelope, cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	key := strings.TrimSpace(env.Sender)
+	if key == "" {
+		key = strings.TrimSpace(env.ConversationID)
+	}
+	if key == "" {
+		return false
+	}
+	now := coalesceTime(env.CreatedAt, time.Now())
+	window := time.Duration(cfg.Security.UntrustedMessageRateLimitSeconds) * time.Second
+	s.untrustedNotifyMu.Lock()
+	defer s.untrustedNotifyMu.Unlock()
+	last, ok := s.lastUntrustedNotifyByKey[key]
+	if ok && now.Sub(last) < window {
+		return false
+	}
+	s.lastUntrustedNotifyByKey[key] = now
+	return true
+}
+
+func formatUntrustedMessageNotification(env types.IncomingEnvelope, includePreview bool) string {
+	lines := []string{
+		"Untrusted message attempt.",
+		fmt.Sprintf("From: %s", strings.TrimSpace(env.Sender)),
+		fmt.Sprintf("Chat: %s", env.ChatType),
+		fmt.Sprintf("Time: %s", coalesceTime(env.CreatedAt, time.Now()).Format(time.RFC3339)),
+	}
+	if includePreview {
+		preview := strings.TrimSpace(effectiveIncomingText(env))
+		if preview == "" {
+			preview = "(empty)"
+		}
+		if len(preview) > 160 {
+			preview = preview[:160] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("Preview: %s", preview))
+	} else {
+		lines = append(lines, "Preview: disabled")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func normalizedUntrustedMessageAlertState(cfg *config.Config) string {
+	if cfg == nil || !cfg.Security.NotifyOnUntrustedMessage {
+		return "disabled"
+	}
+	recipients := len(cfg.Security.UntrustedMessageNotifyNumbers)
+	preview := "disabled"
+	if cfg.Security.UntrustedMessageIncludePreview {
+		preview = "enabled"
+	}
+	return fmt.Sprintf("enabled (%d recipient%s, preview %s, rate limit %ds)", recipients, pluralSuffix(recipients), preview, cfg.Security.UntrustedMessageRateLimitSeconds)
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func exitStatus(err error) *int {

@@ -1,5 +1,6 @@
 .gocache/
 .gomodcache/
+.cache/
 /abx
 config.toml
 *.db

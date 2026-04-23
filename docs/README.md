@@ -38,7 +38,7 @@
 
 1. Install `signal-cli`.
 2. Register the bot Signal account with `signal-cli`.
-3. Copy `config.toml.example` to `~/.config/abx/config.toml`.
+3. Copy `config.toml.example` to `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml`.
 4. Update the Signal account, trusted numbers, OpenAI API key, and command policy rules.
 5. If you want local MCP-style integrations for a local agent endpoint, enable the desired `[[mcp.servers]]` entries.
 6. Start `signal-cli` in JSON-RPC mode.
@@ -52,21 +52,24 @@ The default `abx` config expects `signal-cli` to expose JSON-RPC over a local UN
 1. Create the Signal data directory if needed:
 
 ```bash
-mkdir -p ~/.local/share/signal-cli
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/signal-cli"
 ```
 
 2. Start `signal-cli` in daemon mode with a UNIX socket:
 
 ```bash
-signal-cli daemon --socket ~/.local/share/signal-cli/json-rpc.sock
+signal-cli daemon --socket "${XDG_DATA_HOME:-$HOME/.local/share}/signal-cli/json-rpc.sock"
 ```
 
-3. Make sure your `~/.config/abx/config.toml` matches that socket path:
+3. Make sure your `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml` either leaves `rpc_socket` unset so `abx` uses the default XDG path, or sets an explicit absolute socket path:
 
 ```toml
 [messaging.signal_cli]
 rpc_mode = "json-rpc"
-rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
+# Leave rpc_socket unset to use:
+#   $XDG_DATA_HOME/signal-cli/json-rpc.sock
+#   or ~/.local/share/signal-cli/json-rpc.sock when XDG_DATA_HOME is unset.
+# rpc_socket = "/absolute/path/to/signal-cli/json-rpc.sock"
 ```
 
 If you prefer TCP on loopback instead of a UNIX socket, bind only to `127.0.0.1` and update the config accordingly:
@@ -91,6 +94,8 @@ rpc_port = 7583
 ## Configuration Notes
 
 - Configuration is file-based only in v1.
+- When `-config` is omitted, `abx` loads `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml`.
+- If `messaging.signal_cli.data_dir`, `messaging.signal_cli.rpc_socket`, `audit.file_path`, `database.dsn`, or `command.work_dir` are omitted, `abx` fills them from XDG defaults.
 - The checked-in `VERSION` file is the source of truth for release versioning.
 - `agent.primary.model` is required for OpenAI.
 - `security.notify_on_untrusted_message` can send a notification to selected trusted numbers when an untrusted sender contacts the bot.

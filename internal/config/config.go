@@ -114,11 +114,11 @@ type CommandPolicyRule struct {
 
 func Load(path string) (*Config, error) {
 	if path == "" {
-		home, err := os.UserHomeDir()
+		var err error
+		path, err = defaultConfigPath()
 		if err != nil {
-			return nil, fmt.Errorf("resolve home dir: %w", err)
+			return nil, err
 		}
-		path = filepath.Join(home, ".config", "abx", "config.toml")
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, fmt.Errorf("create config dir: %w", err)
 		}
@@ -146,6 +146,50 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) normalize() error {
+	if c.Messaging.Provider == "" {
+		c.Messaging.Provider = "signal-cli"
+	}
+	if c.Messaging.SignalCLI.RPCMode == "" {
+		c.Messaging.SignalCLI.RPCMode = "json-rpc"
+	}
+	if c.Messaging.SignalCLI.DataDir == "" {
+		dataDir, err := defaultSignalCLIDataDir()
+		if err != nil {
+			return err
+		}
+		c.Messaging.SignalCLI.DataDir = dataDir
+	}
+	if c.Messaging.SignalCLI.RPCSocket == "" &&
+		c.Messaging.SignalCLI.RPCHost == "" &&
+		c.Messaging.SignalCLI.RPCPort == 0 &&
+		c.Messaging.SignalCLI.RPCMode == "json-rpc" {
+		c.Messaging.SignalCLI.RPCSocket = filepath.Join(c.Messaging.SignalCLI.DataDir, "json-rpc.sock")
+	}
+	if c.Database.Type == "" {
+		c.Database.Type = "sqlite"
+	}
+	if c.Audit.FilePath == "" {
+		filePath, err := defaultAuditFilePath()
+		if err != nil {
+			return err
+		}
+		c.Audit.FilePath = filePath
+	}
+	if c.Database.DSN == "" && c.Database.Type == "sqlite" {
+		dsn, err := defaultDatabaseDSN()
+		if err != nil {
+			return err
+		}
+		c.Database.DSN = dsn
+	}
+	if c.Command.WorkDir == "" {
+		workDir, err := defaultWorkDir()
+		if err != nil {
+			return err
+		}
+		c.Command.WorkDir = workDir
+	}
+
 	c.Messaging.SignalCLI.BinaryPath = expandHome(c.Messaging.SignalCLI.BinaryPath)
 	c.Messaging.SignalCLI.DataDir = expandHome(c.Messaging.SignalCLI.DataDir)
 	c.Messaging.SignalCLI.RPCSocket = expandHome(c.Messaging.SignalCLI.RPCSocket)
@@ -153,15 +197,6 @@ func (c *Config) normalize() error {
 	c.Database.DSN = expandHome(c.Database.DSN)
 	c.Command.WorkDir = expandHome(c.Command.WorkDir)
 
-	if c.Messaging.Provider == "" {
-		c.Messaging.Provider = "signal-cli"
-	}
-	if c.Messaging.SignalCLI.RPCMode == "" {
-		c.Messaging.SignalCLI.RPCMode = "json-rpc"
-	}
-	if c.Database.Type == "" {
-		c.Database.Type = "sqlite"
-	}
 	if c.Command.TimeoutSeconds <= 0 {
 		c.Command.TimeoutSeconds = 60
 	}

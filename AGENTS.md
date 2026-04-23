@@ -153,7 +153,7 @@ Run the smallest relevant test set first, then broaden when needed.
 - Main suite: `go test ./...`
 - Format: `make fmt`
 - Full tests: `make test`
-- Optional extra check: `GOCACHE=$(pwd)/.gocache GOMODCACHE=$(pwd)/.gomodcache go vet ./...`
+- Optional extra check: `GOCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/abx/go-build" GOMODCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/abx/gomod" go vet ./...`
 
 Testing guidance:
 

@@ -16,7 +16,7 @@
 
 - Runs on macOS (tested with recent macOS versions + bash)
 - Uses locally installed signal-cli (no Docker)
-- Configuration file located at `~/.config/abx/config.toml`
+- Configuration file located at `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml`
 - Simple os/exec for bash commands (no sandboxing)
 - All commands require explicit approval using a request-bound token such as `YES 482731`
 - Single binary, minimal dependencies
@@ -31,7 +31,7 @@
 - **Agent**: OpenAI-compatible chat APIs as the primary agent contract, with a native LM Studio `/api/v1/chat` path used for local MCP-enabled endpoints
   - In v1, agent responses must come from the configured model plus locally available conversation context only
   - In v1, external tools for live data retrieval are out of scope
-- **Configuration**: TOML file at `~/.config/abx/config.toml`
+- **Configuration**: TOML file at `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml`
 - **Runtime Model**: `abx` runs as a long-lived local process that continuously handles messaging events, approvals, and command execution
 - **Persistence**: Abstracted repository (SQLite default, in-memory for testing)
 - **Security**:
@@ -49,7 +49,7 @@ User (trusted messaging identity)
 Messaging Adapter (v1: signal-cli installed locally on macOS)
     ↓ JSON-RPC events and commands
 Go Application `abx` (single macOS binary)
-    ├── Config Loader (~/.config/abx/config.toml)
+    ├── Config Loader (${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml)
     ├── Messenger Adapter (v1: SignalCLIAdapter)
     ├── Agent: OpenAIAdapter (primary) + Fallback logic
     ├── Repository (abstracted: SQLite / InMemory)
@@ -59,7 +59,7 @@ Go Application `abx` (single macOS binary)
 
 ## 4. Configuration
 
-**Default location**: `~/.config/abx/config.toml`
+**Default location**: `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml`
 
 ### Example config.toml:
 
@@ -71,9 +71,11 @@ provider = "signal-cli"
 [messaging.signal_cli]
 binary_path = "/usr/local/bin/signal-cli"   # or /opt/homebrew/bin/signal-cli on Apple Silicon
 account = "+16505551234"                    # Bot's Signal phone number
-data_dir = "~/.local/share/signal-cli"
+# Defaults to $XDG_DATA_HOME/signal-cli or ~/.local/share/signal-cli.
+# data_dir = "/absolute/path/to/signal-cli-data"
 rpc_mode = "json-rpc"                       # v1 primary mode
-rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
+# Defaults to <data_dir>/json-rpc.sock when rpc_mode = "json-rpc".
+# rpc_socket = "/absolute/path/to/signal-cli-data/json-rpc.sock"
 # If using TCP instead of a UNIX socket, configure loopback-only settings such as:
 # rpc_host = "127.0.0.1"
 # rpc_port = 7583
@@ -115,19 +117,22 @@ untrusted_message_rate_limit_seconds = 900
 
 # Audit Logging
 [audit]
-file_path = "~/.local/share/abx/audit.log"
+# Defaults to $XDG_STATE_HOME/abx/audit.log or ~/.local/state/abx/audit.log.
+# file_path = "/absolute/path/to/abx/audit.log"
 retention_days = 30
 max_output_bytes = 8192
 
 # Database
 [database]
 type = "sqlite"
-dsn = "~/.local/share/abx/app.db"
+# Defaults to $XDG_STATE_HOME/abx/app.db or ~/.local/state/abx/app.db.
+# dsn = "/absolute/path/to/abx/app.db"
 
 # Command settings (macOS bash)
 [command]
 timeout_seconds = 60
-work_dir = "~/abx/workspace"                # Created automatically if missing
+# Defaults to $XDG_STATE_HOME/abx/workspace or ~/.local/state/abx/workspace.
+# work_dir = "/absolute/path/to/abx/workspace"  # Created automatically if missing
 policy_mode = "allowlist"                   # v1 default: deny by default, allow only explicit matches
 
 [[command.policy.rules]]
@@ -204,7 +209,7 @@ abx/
 ├── cmd/abx/
 │   └── main.go
 ├── internal/
-│   ├── config/           # Loads from ~/.config/abx/config.toml
+│   ├── config/           # Loads from ${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml
 │   ├── agent/
 │   │   ├── provider.go
 │   │   └── openai/
@@ -239,7 +244,7 @@ All project documentation must live under the `docs/` directory. The repository 
 
 ## 8. Key Behaviors & macOS Specifics
 
-- **Config Loading**: Automatically creates `~/.config/abx/` directory if missing. Uses `os.UserHomeDir()` + TOML parser (`github.com/pelletier/go-toml/v2` recommended).
+- **Config Loading**: Automatically creates `${XDG_CONFIG_HOME:-$HOME/.config}/abx/` if missing and falls back to the home-based XDG path when `XDG_CONFIG_HOME` is unset.
   - In v1, configuration is file-based only; environment variable overrides are out of scope.
 
 - **signal-cli Integration**:
@@ -288,7 +293,7 @@ All project documentation must live under the `docs/` directory. The repository 
   - Only requests that would result in local shell command execution must enter the approval flow.
   - If the system cannot confidently determine whether a request requires shell execution, it should prefer the safer path and require approval before executing any command.
 
-- **Command Execution**: Uses `/bin/bash -c "command"` on macOS. Working directory defaults to `~/abx/workspace`.
+- **Command Execution**: Uses `/bin/bash -c "command"` on macOS. Working directory defaults to `${XDG_STATE_HOME:-$HOME/.local/state}/abx/workspace`.
   - v1 command execution must be deny-by-default.
   - A command may execute only if it matches at least one enabled `allow` policy rule and does not match any enabled `deny` policy rule.
   - Rule evaluation must happen before any approval prompt is considered complete.
@@ -387,7 +392,7 @@ All project documentation must live under the `docs/` directory. The repository 
   - Any other trusted response cancels the proposal for that chat.
   - After cancellation, the same message should continue through normal message classification and be handled as a conversational request, built-in control command, or a new shell-command request as appropriate.
 
-- **Persistence**: SQLite file stored under `~/.local/share/abx/app.db` by default.
+- **Persistence**: SQLite file stored under `${XDG_STATE_HOME:-$HOME/.local/state}/abx/app.db` by default.
 
 - **Logging**: Console + optional file logging. Structured output suitable for macOS Terminal.
   - Audit logs must be written to a persistent local file in addition to console output.
@@ -488,8 +493,8 @@ The v1 trust model must not rely on a phone number alone. Signal reduces casual 
 
 1. **Install signal-cli on macOS**: `brew install signal-cli`
 2. **Register your Signal account** with signal-cli (run `signal-cli register +1xxxxxxxxxx` etc.)
-3. **Create config directory**: `mkdir -p ~/.config/abx`
-4. **Copy and configure**: `config.toml.example` → `~/.config/abx/config.toml` and edit values.
+3. **Create config directory**: `mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/abx"`
+4. **Copy and configure**: `config.toml.example` → `${XDG_CONFIG_HOME:-$HOME/.config}/abx/config.toml` and edit values.
    - Configure trusted numbers and command allow rules.
    - For remote OpenAI use, configure `agent.primary.api_key` and `agent.primary.model`.
    - For local OpenAI-compatible endpoints such as LM Studio, configure `base_url` and `model`; `api_key` may be omitted if the local endpoint does not require one.

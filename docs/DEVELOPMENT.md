@@ -13,8 +13,8 @@
 Default UNIX socket mode:
 
 ```bash
-mkdir -p ~/.local/share/signal-cli
-signal-cli daemon --socket ~/.local/share/signal-cli/json-rpc.sock
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/signal-cli"
+signal-cli daemon --socket "${XDG_DATA_HOME:-$HOME/.local/share}/signal-cli/json-rpc.sock"
 ```
 
 Loopback TCP mode:
@@ -58,7 +58,7 @@ If you use loopback TCP, update `config.toml` to set `rpc_host` and `rpc_port` i
 - `make fmt`
 - `make test`
 - `make release-artifacts`
-- `GOCACHE=$(pwd)/.gocache GOMODCACHE=$(pwd)/.gomodcache go vet ./...`
+- `GOCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/abx/go-build" GOMODCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/abx/gomod" go vet ./...`
 - GitHub Actions runs formatting, tests, `go vet`, and build checks on every push and pull request via `.github/workflows/ci.yml`
 - GitHub Actions also publishes a GitHub release from `.github/workflows/release.yml` when a `vX.Y.Z` tag is pushed and the tag matches the checked-in `VERSION` file
 

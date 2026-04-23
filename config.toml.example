@@ -5,9 +5,11 @@ provider = "signal-cli"
 [messaging.signal_cli]
 binary_path = "/opt/homebrew/bin/signal-cli"
 account = "+16505551234"
-data_dir = "~/.local/share/signal-cli"
+# Defaults to $XDG_DATA_HOME/signal-cli or ~/.local/share/signal-cli.
+# data_dir = "/absolute/path/to/signal-cli-data"
 rpc_mode = "json-rpc"
-rpc_socket = "~/.local/share/signal-cli/json-rpc.sock"
+# Defaults to <data_dir>/json-rpc.sock when rpc_mode = "json-rpc".
+# rpc_socket = "/absolute/path/to/signal-cli-data/json-rpc.sock"
 # rpc_host = "127.0.0.1"
 # rpc_port = 7583
 
@@ -70,19 +72,22 @@ untrusted_message_rate_limit_seconds = 900
 
 # Audit Logging
 [audit]
-file_path = "~/.local/share/abx/audit.log"
+# Defaults to $XDG_STATE_HOME/abx/audit.log or ~/.local/state/abx/audit.log.
+# file_path = "/absolute/path/to/abx/audit.log"
 retention_days = 30
 max_output_bytes = 8192
 
 # Database
 [database]
 type = "sqlite"
-dsn = "~/.local/share/abx/app.db"
+# Defaults to $XDG_STATE_HOME/abx/app.db or ~/.local/state/abx/app.db.
+# dsn = "/absolute/path/to/abx/app.db"
 
 # Command settings
 [command]
 timeout_seconds = 60
-work_dir = "~/abx/workspace"
+# Defaults to $XDG_STATE_HOME/abx/workspace or ~/.local/state/abx/workspace.
+# work_dir = "/absolute/path/to/abx/workspace"
 policy_mode = "allowlist"
 
 [[command.policy.rules]]

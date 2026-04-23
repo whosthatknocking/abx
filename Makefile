@@ -1,6 +1,7 @@
 GO ?= go
-GOCACHE ?= $(CURDIR)/.gocache
-GOMODCACHE ?= $(CURDIR)/.gomodcache
+XDG_CACHE_HOME ?= $(if $(HOME),$(HOME)/.cache,$(CURDIR)/.cache)
+GOCACHE ?= $(XDG_CACHE_HOME)/abx/go-build
+GOMODCACHE ?= $(XDG_CACHE_HOME)/abx/gomod
 VERSION_FILE ?= VERSION
 VERSION ?= $(shell cat $(VERSION_FILE) 2>/dev/null || echo dev)
 BUILD_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "")

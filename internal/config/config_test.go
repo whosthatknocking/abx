@@ -239,17 +239,8 @@ description = "test"
 
 func TestLoadCreatesDefaultConfigDirectory(t *testing.T) {
 	tmpHome := t.TempDir()
-	originalHome, hadHome := os.LookupEnv("HOME")
-	if err := os.Setenv("HOME", tmpHome); err != nil {
-		t.Fatalf("set HOME: %v", err)
-	}
-	defer func() {
-		if hadHome {
-			_ = os.Setenv("HOME", originalHome)
-			return
-		}
-		_ = os.Unsetenv("HOME")
-	}()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	configDir := filepath.Join(tmpHome, ".config", "abx")
 	configPath := filepath.Join(configDir, "config.toml")
@@ -296,6 +287,109 @@ description = "test"
 	}
 	if cfg == nil {
 		t.Fatal("expected config")
+	}
+}
+
+func TestLoadUsesXDGConfigHomeWhenSet(t *testing.T) {
+	tmpHome := t.TempDir()
+	tmpConfigHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_CONFIG_HOME", tmpConfigHome)
+
+	configDir := filepath.Join(tmpConfigHome, "abx")
+	configPath := filepath.Join(configDir, "config.toml")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected missing config file error")
+	}
+	if _, err := os.Stat(configDir); err != nil {
+		t.Fatalf("expected config dir to be created under XDG_CONFIG_HOME: %v", err)
+	}
+
+	input := `
+[agent.primary]
+provider = "openai"
+model = "gpt-4o-mini"
+
+[security]
+trusted_numbers = ["+1"]
+
+[database]
+type = "inmemory"
+dsn = "ignored"
+
+[[command.policy.rules]]
+id = "allow-pwd"
+enabled = true
+action = "allow"
+match_type = "exact"
+pattern = "pwd"
+description = "test"
+`
+	if err := os.WriteFile(configPath, []byte(input), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load default config from XDG_CONFIG_HOME: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config")
+	}
+}
+
+func TestNormalizeAppliesXDGDefaults(t *testing.T) {
+	tmpHome := t.TempDir()
+	tmpDataHome := t.TempDir()
+	tmpStateHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_DATA_HOME", tmpDataHome)
+	t.Setenv("XDG_STATE_HOME", tmpStateHome)
+
+	cfg := &Config{
+		Agent: AgentConfig{
+			Primary: ProviderConfig{
+				Provider: "openai",
+				Model:    "gpt-4o-mini",
+			},
+		},
+		Security: SecurityConfig{
+			TrustedNumbers: []string{"+1"},
+		},
+		Command: CommandConfig{
+			Policy: CommandPolicyConfig{
+				Rules: []CommandPolicyRule{{
+					ID:          "allow-pwd",
+					Enabled:     true,
+					Action:      "allow",
+					MatchType:   "exact",
+					Pattern:     "pwd",
+					Description: "test",
+				}},
+			},
+		},
+	}
+
+	if err := cfg.normalize(); err != nil {
+		t.Fatalf("normalize config: %v", err)
+	}
+	if cfg.Messaging.SignalCLI.DataDir != filepath.Join(tmpDataHome, "signal-cli") {
+		t.Fatalf("unexpected signal-cli data dir %q", cfg.Messaging.SignalCLI.DataDir)
+	}
+	if cfg.Messaging.SignalCLI.RPCSocket != filepath.Join(tmpDataHome, "signal-cli", "json-rpc.sock") {
+		t.Fatalf("unexpected signal-cli rpc socket %q", cfg.Messaging.SignalCLI.RPCSocket)
+	}
+	if cfg.Audit.FilePath != filepath.Join(tmpStateHome, "abx", "audit.log") {
+		t.Fatalf("unexpected audit file path %q", cfg.Audit.FilePath)
+	}
+	if cfg.Database.Type != "sqlite" {
+		t.Fatalf("unexpected database type %q", cfg.Database.Type)
+	}
+	if cfg.Database.DSN != filepath.Join(tmpStateHome, "abx", "app.db") {
+		t.Fatalf("unexpected database dsn %q", cfg.Database.DSN)
+	}
+	if cfg.Command.WorkDir != filepath.Join(tmpStateHome, "abx", "workspace") {
+		t.Fatalf("unexpected command work dir %q", cfg.Command.WorkDir)
 	}
 }
 
